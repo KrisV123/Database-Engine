@@ -1,0 +1,170 @@
+DATABAZA:
+
+3, nejaka kontrola, ktora by kontrolovala, ci sedi byte_model a python premenne v atributoch
+4, mozno nieco vymysliet, co kontroluje unikatnost klucov
+5, vytvaranie byte_modelu urcite poje nejako automatizovat (napriklad v metatreide alebo metodou)
+6, urobit vyhladavanie prveho volneho miesta pomocou binary search v kominacii s prefix sum alebo fenwick
+
+Robota:
+
+1.  napisat test na unreadable_log parameter a iter_logs(corrupt=True)
+2.  Zamysliet sa, ci netreba lepsie testy na WAL
+
+____________________________________________________________________________________
+
+TEST 1:
+
+1. pripad - neefektivne mapovanie dat do pamati (opakovane v kazdej iteracii)
+2. pripad - namapovanie iba raz
+
+1, SITUACIA
+
+50 000 iteracii na datach
+
+snipet test kodu:
+
+id: int,
+krsne: str,
+priezvysko: str | None,
+dat_nar: str | None,
+vyska: float | None,
+ma_vodicak: bool | None
+
+model = Model(i, 'Andrej', 'Meško', None, 152.5, True)
+model.set() "všetko"
+
+1. pripad - 6.81, 6.89, 6.86, 6.78, 6.80, 6.87 
+2. pripad - 0.51, 0.51, 0.53, 0.51, 0.53, 0.52
+
+2, SITUACIA
+
+50 000 iteracii na datach
+
+snipet test kodu:
+
+id: int,
+krsne: str,
+priezvysko: str | None,
+dat_nar: str | None,
+vyska: float | None,
+ma_vodicak: bool | None
+
+model = Model(i, 'Andrej', 'Meško', None, 152.5, True)
+model.set('krsne', 'vyska') "iba dva parametre"
+
+1. pripad - 6.46, 6.51, 6.49, 6.50, 6.49
+2. pripad - 0.26, 0.26, 0.26, 0.27, 0.27
+
+Dôvod: očividné
+SUCC
+
+
+3, SITUACIA
+
+to isté ako 1, SITUACIA ale ešte s memoryview na 100 000 dátach
+
+1. prídap - 0.92, 0.96, 0.97, 0.93, 0.94
+2. prípad - 0.94, 0.92, 0.96, 0.94, 0.96
+
+4, SITUACIA
+
+to isté ako 2, SITUACIA ale ešte s memoryview na 100 000 dátach
+
+1. prídap - 0.47, 0.48, 0.46, 0.45, 0.47
+2. prípad - 0.47, 0.45, 0.46, 0.47, 0.47
+
+
+Dôvod: iteracia na memoryview je rovnako rychla a nie je optimalizovaná na pamäti
+FAIL
+____________________________________________________________________________________
+
+TEST 2
+
+1. pripad - obycajny struct.pack
+2. pripad - predkompilovany struct objekt
+
+1, SITUACIA
+
+10 000 iteracii na datach
+
+snipet test kodu:
+
+id: int,
+krsne: str,
+priezvysko: str | None,
+dat_nar: str | None,
+vyska: float | None,
+ma_vodicak: bool | None
+
+model = Model(i, 'Andrej', 'Meško', None, 152.5, True)
+
+1. prípad - 8.51, 8.40, 8.39, 8.59, 8.65, 8.60, 8.68, 8.43, 8.63, 8.60
+2. prípad - 8.65, 8.59, 8.38, 8.48, 8.72, 8.62, 8.52, 8.29, 8.39, 8.43
+
+Dôvod: iba malý rozdiel ale pomáha
+____________________________________________________________________________________
+
+TEST_3
+
+1. vytvorenie dict cez list comprehention a pretypovanie na table
+2. dynamicke vkladanie bez pretypovania
+
+50 000 iterácii v datach
+
+snipet test kodu:
+
+id: int,
+name: str,
+surname: str,
+birth_date: str | None,
+email: str | None = None,
+phone_num: str | None = None
+
+model = Test(i, 'Kristian', 'Vesely', '20.01.2001', 'kris.v@gmail.com', None)
+table = Test.set()
+new_table = Test.set().select("id > 10000")
+diff_table = orig_table.difference(new_table)
+
+1. prípad: 0.0279, 0.0301, 0.0299, 0.0304, 0.0304
+2. prípad: 0.0294, 0.0254, 0.0287, 0.0243, 0.0252
+
+Dôvod: prose to vychádza lepšie
+____________________________________________________________________________________
+
+TEST_3
+
+1. hladanie volneho miesta v bitmap so skakanim po 8 bajtoch
+2. hladanie volneho miesta v bitmap so skakanim po 1 bajte
+
+snipet test kodu:
+
+id: int,
+name: str,
+surname: str,
+birth_date: str | None,
+email: str | None = None,
+phone_num: str | None = None
+
+100 000 iterácii v databáze
+
+def test():
+    for i in range(1000):
+        model = Test(
+            i,
+            'Kristian',
+            'Vesely',
+            '20.01.2001',
+            'kris.v@gmail.com',
+            None
+        )
+        model.send()
+    Test.delete("name != 'Kristian'")
+    Test.delete_table()
+
+import timeit
+print(timeit.timeit(test, number=100))
+
+1. 84.8549, 81.6928, 83.7609, 82.8280, 82.0251, 83.5261, 82.8017, 82.6512, 82.8017, 82.6512
+2. 82.2086, 82.4836, 82.3347, 82.0892, 82.2859, 82.8039, 82.5595, 82.5998, 82.0121, 82.2254
+
+Dôvod: Proste je to lepšie. Menšie rozdiely ale hlavne stabilnejšie hodnoty.

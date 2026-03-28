@@ -1,0 +1,8 @@
+/.vscode
+/.mypy_cache
+/.pytest_cache
+/database/person_model/__pycache__
+/database/tools/__pycache__
+/tests/database/tools/__pycache__
+/tests/test_model/__pycache__
+/tests/database/test_model/__pycache__

@@ -1152,7 +1152,8 @@ class HighBaseModel(LowBaseModel):
         mask_len, length = cls.get_mask_len(), cls.inst_len()
         ast = build_AST(SJ_alg(tokenize(expr)))
         attr_offset, attr_ctype, _ = cls._setup_attr_struct()
-        vvars = [attrib for attrib in cls.__slots__ if attrib in get_values(ast)]
+        #vvars = [attrib for attrib in cls.__slots__ if attrib in get_values(ast)]
+        vvars = [attrib for attrib in cls.__slots__ if attrib in expr]
 
         with ExitStack() as stack:
             data_path = cls.path / 'data/data.bin'
@@ -1241,8 +1242,11 @@ class HighBaseModel(LowBaseModel):
 
         compiled_attrs = {attr: build_AST(SJ_alg(tokenize(expr))) for attr, expr in attrs.items()}
         vvars = [attr for attr in cls.__slots__ if attr in get_values(expr_ast)]
+        #vvars = [attr for attr in cls.__slots__ if attr in expr]
         vvars += [attr for expr in compiled_attrs.values()
                        for attr in cls.__slots__ if attr in get_values(expr)]
+        #vvars += [attr for expr in compiled_attrs.values()
+        #               for attr in cls.__slots__ if attr in expr]
 
         with ExitStack() as stack:
             data_path = cls.path / 'data/data.bin'

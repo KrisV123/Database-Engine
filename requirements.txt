@@ -4,3 +4,4 @@ packaging==26.0
 pluggy==1.6.0
 Pygments==2.19.2
 pytest==9.0.2
+Safe-Evaluator @ git+https://github.com/KrisV123/Safe-Evaluator.git@b85805290a7994fbc3f11b66a3c3f604cfe8589e

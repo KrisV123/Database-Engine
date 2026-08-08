@@ -1,62 +1,145 @@
-import os
-import mmap
 from pathlib import Path
-from database.tools.BaseModel import HighBaseModel
+from database.tools.core.HighBaseModel import HighBaseModel
+from database.tools.core.meta import BaseModelMeta
 from database.tools.wal_comp import WAL
+from dataclasses import dataclass
+from typing import ClassVar, Annotated
+from pprint import pprint
 
-class Model(HighBaseModel):
+@dataclass(slots=True)
+class Model(HighBaseModel, metaclass=BaseModelMeta):
+
+    id: Annotated[int, "unsigned int"]
+    krsne: Annotated[str, 20]
+    priezvysko: Annotated[str, '20p'] | None
+    dat_nar: Annotated[str, 20] | None
+    vyska: Annotated[float, 'float'] | None
+    ma_vodicak: bool | None
+    neviem: Annotated[int, "unsigned int"] | None
+
     # key or superkey
-    primary_key: list[str] = ['id']
-    byte_model = 'I 20s 20s 20s f ?'
-    path: Path = Path(__file__).parent
+    primary_key: ClassVar[tuple[str]] = ('id',)
+    #byte_model: ClassVar[str] = '< I 20s 20s 20s f ? I'
+    path: ClassVar[Path] = Path(__file__).parent
 
-    def __init__(self, id: int,
-                       krsne: str,
-                       priezvysko: str | None,
-                       dat_nar: str | None,
-                       vyska: float | None,
-                       ma_vodicak: bool | None):
-        self.id = id
-        self.krsne = krsne
-        self.priezvysko = priezvysko
-        self.dat_nar = dat_nar
-        self.vyska = vyska
-        self.ma_vodicak = ma_vodicak
 
+def setup_table() -> None:
+    for i in range(10):
+        model = Model(
+            i, 'Kristian', None, '20.01.2001',
+            187.5, True, i
+        )
+        model.send()
+    pprint(Model.set())
+
+def tracked_delete() -> int:
+    with WAL(Model, 'testing'):
+        count = Model.delete('id < 20')
+    pprint(Model.set())
+    return count
+
+def untracked_delete() -> int:
+    count = Model.delete('id < 20')
+    pprint(Model.set())
+    return count
+
+def delete_table() -> None:
+    Model.delete_table()
+    pprint(Model.set())
+
+def rollback_log(file: str):
+    WAL.rollback(Model, file)
+    pprint(Model.set())
+
+def combined_tracked_transaction() -> None:
+    with WAL(Model, 'testing'):
+        new_line = Model(110, 'Andrej', 'Mesko', '18.02.2001', 162.3, True, 1)
+        new_line.send()
+
+        Model.delete('2 < id < 8')
+
+        Model.update('id < 100', krsne="'Adam'")
+
+        Model.delete_table()
+
+        Model(5, 'Jozko', 'Mrkvicka', '69.7.2000', 110.2, False, 1).send()
+
+def untracked_update() -> None:
+    Model.update('id < 100', krsne="'Adam'")
+    pprint(Model.set())
+
+def tracked_delete_table() -> None:
+    with WAL(Model, 'testing'):
+        Model.delete_table()
+    pprint(Model.set())
 
 if __name__ == '__main__':
+    #print(Model.get_byte_model_list())
+    #print(Model.get_endianness_symbol())
+
+    """
+    Model.delete_table()
+
+    model = Model(
+        1, 'Kristian', 'Vesely', '20.01.2001',
+        187.5, True, 1
+    )
+    model.send()
+    pprint(Model.set())
+
+    Model.delete_table()
+    """
+
+    print(Model.byte_model)
+
+    Model.delete_table()
+
+    setup_table()
+    Model.delete("id == 8")
+
+    Model(8, '', '', '', 187.1, True, 69).send()
+
+    print()
+    pprint(Model.set())
+
+    Model.delete_table()
+
+    #setup_table()
+    #combined_tracked_transaction()
+    #pprint(Model.set())
+
+    #WAL.rollback(Model, 'database/person_model/data/wal_logs/testing_26-07-26_15-09-870166.log')
+    #pprint(Model.set())
+
+    #Model.delete_table()
+
+    """
+    rollback_log('database/person_model/data/wal_logs/testing_26-07-23_23-29-576770.log')
+    pprint(Model.set())
+    """
+    #delete_table()
+    #combined_tracked_transaction()
+    #delete_table()
+
+    """
     with WAL(Model, 'testing'):
-        for i in range(50000):
+        for i in range(10, 15):
             model = Model(i, 'Andrej', 'Meško', None, 152.5, True)
             model.send()
 
-    import time
-    start = time.time()
-    table = Model.set()
-    end = time.time()
-    for key, column in table.items():
-        print(key, column)
-    #print(table)
-    print(end - start)
+    pprint(Model.set())
+    """
 
-    """with open(Model.path / 'data/tombstone.map', 'r+b') as f:
-        #mm = mmap.mmap(f.fileno(), 0)
-        #mm[0] = 239
-        data = f.read()
-        for byte in data:
-            print(f'{byte:08b}')"""
-
-    #Model.update("krsne == 'Kristian'", priezvysko = "'Veselý'")
-    #print(Model.set())
-    #Model.delete("krsne == 'Kristian'")
-    #print(Model.set())
-
-    """start = time.time()
+    """
+    with WAL(Model, 'testing'):
+        Model.delete('1 < id < 100')
     print(Model.set())
-    end = time.time()
-    print(end - start)"""
+    """
 
-    Model.delete_table()
+    #WAL.rollback(Model, Path('database/person_model/data/wal_logs/testing_26-07-22_19-13-168880.log'))
+    #pprint(Model.set())
+
+    #Model.delete_table()
 
     """start = time.time()
     new_table = Model.set().select(
@@ -65,3 +148,20 @@ if __name__ == '__main__':
     print(new_table)
     end = time.time()
     print(end - start)"""
+
+    """
+    person = Model(1, 'Kristian', 'Vesely', '20.1', 187.0, True)
+    person.send()
+    
+    table = Model.set()
+    pprint(table)
+    """
+
+    """
+    Model.delete_table()
+    setup_table()
+    pprint(Model.set())
+    print()
+    print(Model.byte_model)
+    Model.delete_table()
+    """

@@ -15,9 +15,11 @@ from zlib import crc32
 from pathlib import Path
 
 from database.tools.wal_comp import WAL, _LOG_INST, Header_info
-from tests.database.test_model.test import Test
-from database.tools.BaseModel import Table, RowList
-import tests.database.tools.expect_logs as expect_logs
+from tests.test_database.test_model.test import Test
+from database.tools.varint import VarInt
+from database.tools.core.row import RowList
+from database.tools.core.table import Table
+import tests.test_database.test_tools.expect_logs as expect_logs
 
 class Test_WAL:
     trans_name = 'log_specially_made_for_testing'
@@ -59,8 +61,7 @@ class Test_WAL:
     
     class Test_WAL_init:
 
-        def test_WAL_init_sanity(self,
-                                 db_one_usage: Test_WAL.Db_one_use_yield):
+        def test_WAL_init_sanity(self, db_one_usage: Test_WAL.Db_one_use_yield):
             with WAL(Test, 'log_specially_made_for_testing') as log_inst:
                 assert Test.find_empty_space() is not None
                 assert log_inst.trans_name == 'log_specially_made_for_testing'
@@ -69,8 +70,7 @@ class Test_WAL:
                 assert log_inst.db_full == True
                 assert log_inst.empty_space_pnt == 1188
         
-        def test_WAL_init_full(self,
-                               db_one_usage: Test_WAL.Db_one_use_yield):
+        def test_WAL_init_full(self, db_one_usage: Test_WAL.Db_one_use_yield):
             for i in range(11, 16):
                 Test(i, 'Adam', 'Kocan', None, None, None).send()
 
@@ -80,8 +80,7 @@ class Test_WAL:
                 assert log_inst.db_full == True
                 assert log_inst.empty_space_pnt == 1728
         
-        def test_WAL_init_not_full(self,
-                                   db_one_usage: Test_WAL.Db_one_use_yield):
+        def test_WAL_init_not_full(self, db_one_usage: Test_WAL.Db_one_use_yield):
             Test.delete('id == 5')
             with WAL(Test, 'log_specially_made_for_testing') as log_inst:
                 assert log_inst.db_size == 1188
@@ -91,7 +90,7 @@ class Test_WAL:
 
     class Test_change_header_and_get_header:
 
-        def test_change_header_get_header_inst(self, clean_db):
+        def test_change_header_get_header_inst(self, clean_db: Callable[[], None]):
             clean_db()
             status = b'\x08'
             offset_tbl_size = 10
@@ -126,7 +125,7 @@ class Test_WAL:
 
             clean_db()
     
-        def test_change_header_get_header_cls(self, clean_db):
+        def test_change_header_get_header_cls(self, clean_db: Callable[[], None]):
             clean_db()
             status = b'\x08'
             offset_tbl_size = 10
@@ -203,8 +202,7 @@ class Test_WAL:
 
     class Test_enter_exit:
 
-        def test_enter_exit_LOG_INST(self,
-                                     db_one_usage: Test_WAL.Db_one_use_yield):
+        def test_enter_exit_LOG_INST(self, db_one_usage: Test_WAL.Db_one_use_yield):
             assert _LOG_INST.get() is None
 
             with WAL(Test, 'log_specially_made_for_testing'):
@@ -227,7 +225,7 @@ class Test_WAL:
 
         @pytest.fixture
         def new_bytes_data(self) -> bytes:
-            new = (
+            return (
                 b'\x1c\n\x00\x00\x00Jozko\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00'  
                 b'\x00\x00\x00\x00\x00Mrkvicka\x00\x00\x00\x00\x00\x00\x00'
                 b'\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00' 
@@ -236,7 +234,6 @@ class Test_WAL:
                 b'\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00' 
                 b'\x00\x00\x00\x00'
             )
-            return new
 
         def test_handle_operator_send_sanity_full_before(
                                             self,
@@ -277,8 +274,7 @@ class Test_WAL:
                 assert log_inst.empty_space_pnt == 648
                 assert log_inst.db_full == False
 
-        def test_handle_operator_delete_full(self,
-                                             db_one_usage: Test_WAL.Db_one_use_yield):
+        def test_handle_operator_delete_full(self, db_one_usage: Test_WAL.Db_one_use_yield):
             table = Test.set()
             bytes_model = Test.from_row(table[(4,)]).getstate()
             entry = WAL.Entry('DELETE', 540, bytes_model, None)
@@ -289,8 +285,7 @@ class Test_WAL:
                 assert log_inst.db_full == False
                 assert log_inst.empty_space_pnt == 540
 
-        def test_handle_operator_delete_empty_1(self,
-                                                db_one_usage: Test_WAL.Db_one_use_yield):
+        def test_handle_operator_delete_empty_1(self, db_one_usage: Test_WAL.Db_one_use_yield):
             Test.delete("id == 3")
             table = Test.set()
             bytes_model = Test.from_row(table[(4,)]).getstate()
@@ -302,8 +297,7 @@ class Test_WAL:
                 assert log_inst.db_full == False
                 assert log_inst.empty_space_pnt == 324
 
-        def test_handle_operator_delete_empty_2(self,
-                                                db_one_usage: Test_WAL.Db_one_use_yield):
+        def test_handle_operator_delete_empty_2(self, db_one_usage: Test_WAL.Db_one_use_yield):
             Test.delete("id == 8")
             table = Test.set()
             bytes_model = Test.from_row(table[(4,)]).getstate()
@@ -315,11 +309,32 @@ class Test_WAL:
                 assert log_inst.db_full == False
                 assert log_inst.empty_space_pnt == 540
 
+        def test_handle_operator_delete_table_sanity(self, db_one_usage: Test_WAL.Db_one_use_yield):
+
+            entry = WAL.Entry('DELETE_TABLE', None, b'\00', None)
+            with WAL(Test, 'log_specially_made_for_testing') as log_inst:
+                assert log_inst.db_full == True
+                assert log_inst.empty_space_pnt != 0
+                log_inst._handle_operator(entry)
+                assert log_inst.db_full == False
+                assert log_inst.empty_space_pnt == 0
+
+        def test_handle_operator_delete_table_empty(self):
+            entry = WAL.Entry('DELETE_TABLE', None, b'\00', None)
+            with WAL(Test, 'log_specially_made_for_testing') as log_inst:
+                assert log_inst.db_full == True
+                assert log_inst.empty_space_pnt == 0
+                log_inst._handle_operator(entry)
+                assert log_inst.db_full == False
+                assert log_inst.empty_space_pnt == 0
+
 
     class Test_create_log:
 
         model_1 = Test(1, 'Jozko', 'Mrkvicka', None, None, None).getstate()
         model_2 = Test(2, 'Jerdo', 'Mravec', '01.09.1939', None, None).getstate()
+
+        fake_tombstone = b'\x00\x01\x02'
 
         test_inputs: list[tuple[WAL.Entry, bytes]] = [
             (
@@ -366,6 +381,17 @@ class Test_WAL:
                     b'C',
                     b'\x00'
                 ))
+            ),(
+                WAL.Entry('DELETE_TABLE', 0, fake_tombstone, None),
+                b''.join((
+                    b'\x04',
+                    b'\x01', VarInt.to_varint(len(fake_tombstone)) + fake_tombstone,
+                    b'\x00', b'',
+                    crc32(VarInt.to_varint(len(fake_tombstone)) + fake_tombstone).to_bytes(4, 'little', signed=False),
+                    b'',
+                    b'\x00'
+                    b'\x00'
+                ))
             )
         ]
 
@@ -376,7 +402,8 @@ class Test_WAL:
                     'send_sanity',
                     'test_two_byte_idx',
                     'sanity_update',
-                    'sanity_delete'
+                    'sanity_delete',
+                    'sanity_delete_table'
                 ]
         )
         def test_create_log(self, entry: WAL.Entry, log: bytes):
@@ -388,7 +415,7 @@ class Test_WAL:
         def test_create_log_wrong_operator(self):
             log_inst = WAL(Test, 'log_specially_made_for_testing')
             model = Test(1, 'Jozko', 'Mrkvicka', None, None, None).getstate()
-            entry = WAL.Entry('SIXSEVEN', 200, None, model)
+            entry = WAL.Entry('SIXSEVEN', 200, None, model) #type: ignore
             with pytest.raises(TypeError,
                                match="operation or value for operator does not exist"):
                 log_inst.create_log(entry)
@@ -423,7 +450,7 @@ class Test_WAL:
             logs = list(WAL.iter_logs(Test, log_path))
             clean_db()
             assert logs == expect_logs.expect_send_log
-        
+
         def test_iter_logs_and_parse_log_update_sanity(self, clean_db):
             clean_db()
             for i in range(5):
@@ -453,7 +480,7 @@ class Test_WAL:
             logs = list(WAL.iter_logs(Test, log_path))
             clean_db()
             assert logs == expect_logs.expect_update_log
-        
+
         def test_iter_logs_and_parse_log_delete_sanity(self, clean_db):
             clean_db()
             for i in range(5):
@@ -484,42 +511,71 @@ class Test_WAL:
             clean_db()
             assert logs == expect_logs.expect_delete_log
 
+        def test_iter_logs_and_parse_log_delete_table_sanity(self, clean_db):
+            clean_db()
+            for i in range(5):
+                model = Test(
+                    i,
+                    'Kristian',
+                    'Vesely',
+                    '20.01.2001',
+                    'kris.v@gmail.com',
+                    None
+                )
+                model.send()
+
+            for i in range(5, 11):
+                model = Test(
+                    i,
+                    'Jozko',
+                    'Mrkvicka',
+                    None, None, None
+                )
+                model.send()
+
+            with WAL(Test, 'log_specially_made_for_testing') as log_inst:
+                Test.delete_table()
+                log_path = log_inst.log_file_path
+
+            logs = list(WAL.iter_logs(Test, log_path))
+            clean_db()
+            assert logs == expect_logs.expect_delete_table_log
+
 
     class Test_commit:
 
         @classmethod
-        def checking_apply_flag(cls, log_path: Path):
+        def check_apply_flag(cls, log_path: Path):
             log_list = list(WAL.iter_logs(Test, log_path))
             for log in log_list:
                 if log is not None:
                     assert isinstance(log, WAL.Log_data)
                     assert log.applied == True
 
-        def test_commit_send_without_log_eq(self, clean_db: Callable):
+        def test_commit_send_without_log_eq(self, clean_db: Callable[[], None]):
             clean_db()
             for i in range(10):
-                model = Test(
-                    i, 'Kristian', 'Vesely',
-                    None, None, None
-                )
-                model.send()
+                Test(i, 'Kristian', 'Vesely').send()
 
             for i in range(10, 100):
                 model = Test(
-                    i, 'Jozko', 'Mrkvicka', '01.09.1939', 'jozko.mrkvicka@gmail.com', '0955_547_544'
+                    i, 'Jozko', 'Mrkvicka', '01.09.1939',
+                    'jozko.mrkvicka@gmail.com', '0955_547_544'
                 )
                 model.send()
 
             engine_table = Test.set()
+            clean_db()
 
             with WAL(Test, 'log_specially_made_for_testing_1'):
                 for i in range(10):
-                    Test(i, 'Kristian', 'Vesely',).send()
+                    Test(i, 'Kristian', 'Vesely').send()
 
             with WAL(Test, 'log_specially_made_for_testing_2'):
                 for i in range(10, 100):
                     model = Test(
-                        i, 'Jozko', 'Mrkvicka', '01.09.1939', 'jozko.mrkvicka@gmail.com', '0955_547_544'
+                        i, 'Jozko', 'Mrkvicka', '01.09.1939',
+                        'jozko.mrkvicka@gmail.com', '0955_547_544'
                     )
                     model.send()
 
@@ -549,7 +605,7 @@ class Test_WAL:
             )
 
             assert Test.set() == expect_table
-            Test_WAL.Test_commit.checking_apply_flag(log_path)
+            Test_WAL.Test_commit.check_apply_flag(log_path)
 
         def test_commit_update(self, db_one_usage: Test_WAL.Db_one_use_yield):
             preset_data, expect_attrs = db_one_usage
@@ -570,7 +626,7 @@ class Test_WAL:
             )
 
             assert Test.set() == expect_table
-            Test_WAL.Test_commit.checking_apply_flag(log_path)
+            Test_WAL.Test_commit.check_apply_flag(log_path)
 
         def test_commit_delete_1(self, db_one_usage: Test_WAL.Db_one_use_yield):
             preset_data, expect_attrs = db_one_usage
@@ -587,9 +643,9 @@ class Test_WAL:
             )
 
             assert Test.set() == expect_table
-            Test_WAL.Test_commit.checking_apply_flag(log_path)
+            Test_WAL.Test_commit.check_apply_flag(log_path)
 
-        def test_commit_delete_2(self, clean_db: Callable):
+        def test_commit_delete_2(self, clean_db: Callable[[], None]):
             clean_db()
             for i in range(5):
                 Test(i, 'Kristian', 'Vesely', None, None).send()
@@ -617,7 +673,7 @@ class Test_WAL:
             )
 
             assert Test.set() == expect_table
-            Test_WAL.Test_commit.checking_apply_flag(log_path)
+            Test_WAL.Test_commit.check_apply_flag(log_path)
             clean_db()
 
         def test_commit_empty(self, db_one_usage: Test_WAL.Db_one_use_yield):
@@ -629,7 +685,15 @@ class Test_WAL:
 
             log_list = list(WAL.iter_logs(Test, log_path))
             assert len(log_list) == 0
-        
+
+        def test_commit_delete_table(self, db_one_usage: Test_WAL.Db_one_use_yield):
+            assert len(Test.set()) != 0
+
+            with WAL(Test, 'log_specially_made_for_testing'):
+                Test.delete_table()
+
+            assert len(Test.set()) == 0
+
         def test_commit_with_class_1(self, clean_db: Callable[[], None]):
             clean_db()
             with WAL(Test, 'log_specially_made_for_testing') as log_inst:
@@ -644,7 +708,7 @@ class Test_WAL:
             WAL.commit(Test, log_path)
             assert Test.set() == expect_table
             clean_db()
-        
+
         def test_commit_with_class_2(self, db_one_usage: Test_WAL.Db_one_use_yield):
             """Expects that rollback is working properly"""
 
@@ -771,7 +835,7 @@ class Test_WAL:
         def test_check_consistency_not_applyed_logs(
                                         self,
                                         setup_db_with_wal: Callable[[], Path],
-                                        db_one_usage: tuple[list[tuple], dict[str, int]]):
+                                        db_one_usage: Test_WAL.Db_one_use_yield):
             log_path = setup_db_with_wal()
             offsets = WAL.get_offsets(log_path)
             with open(log_path, 'r+b') as log:
@@ -791,7 +855,7 @@ class Test_WAL:
         def test_check_consistency_wrong_status(
                                     self,
                                     setup_db_with_wal: Callable[[], Path],
-                                    db_one_usage: tuple[list[tuple], dict[str, int]]):
+                                    db_one_usage: Test_WAL.Db_one_use_yield):
             log_path = setup_db_with_wal()
             with open(log_path, 'r+b') as log:
                 log.write(b'\x01')
@@ -807,7 +871,7 @@ class Test_WAL:
         def test_check_consistency_corrupt_offsets(
                                     self,
                                     setup_db_with_wal: Callable[[], Path],
-                                    db_one_usage: tuple[list[tuple], dict[str, int]]):
+                                    db_one_usage: Test_WAL.Db_one_use_yield):
             log_path = setup_db_with_wal()
             with open(log_path, 'r+b') as log:
                 log.seek(-1, 2)
@@ -824,7 +888,7 @@ class Test_WAL:
         def test_check_consistency_corrupt_data(
                                     self,
                                     setup_db_with_wal: Callable[[], Path],
-                                    db_one_usage: tuple[list[tuple], dict[str, int]]):
+                                    db_one_usage: Test_WAL.Db_one_use_yield):
             log_path = setup_db_with_wal()
             with open(log_path, 'r+b') as log:
                 log.seek(120)
@@ -841,7 +905,7 @@ class Test_WAL:
         def test_check_consistency_rollbacked(
                                     self,
                                     setup_db_with_wal: Callable[[], Path],
-                                    db_one_usage: tuple[list[tuple], dict[str, int]]):
+                                    db_one_usage: Test_WAL.Db_one_use_yield):
             log_path = setup_db_with_wal()
             WAL.rollback(Test, log_path)
             report = WAL.check_consistency(Test, log_path)
@@ -856,7 +920,7 @@ class Test_WAL:
         def test_check_consistancy_correct_log(
                                     self,
                                     setup_db_with_wal: Callable[[], Path],
-                                    db_one_usage: tuple[list[tuple], dict[str, int]]):
+                                    db_one_usage: Test_WAL.Db_one_use_yield):
             log_path = setup_db_with_wal()
             report = WAL.check_consistency(Test, log_path)
 
@@ -870,8 +934,7 @@ class Test_WAL:
 
     class Test_rollback:
 
-        def test_rollback_sanity_1(self,
-                                   db_one_usage: tuple[list[tuple], dict[str, int]]):
+        def test_rollback_sanity_1(self, db_one_usage: Test_WAL.Db_one_use_yield):
             init_table = Test.set()
             new_data = [(i, 'Jozko', 'Mrkvicka', None, None, None) for i in range(20, 25)]
             with WAL(Test, Test_WAL.trans_name) as log_inst:
@@ -888,8 +951,7 @@ class Test_WAL:
             WAL.rollback(Test, log_path)
             assert init_table == Test.set()
 
-        def test_rollback_satity_2(self,
-                                   db_one_usage: tuple[list[tuple], dict[str, int]]):
+        def test_rollback_satity_2(self, db_one_usage: Test_WAL.Db_one_use_yield):
             init_table = Test.set()
             with WAL(Test, Test_WAL.trans_name) as log_inst:
                 Test.update("id < 1000", name="name + '123'")
@@ -905,8 +967,18 @@ class Test_WAL:
             WAL.rollback(Test, log_path)
             assert init_table == Test.set()
 
-        def test_rollback_with_holes(self,
-                                     db_one_usage: tuple[list[tuple], dict[str, int]]):
+        def test_rollback_sanity_3(self, db_one_usage: Test_WAL.Db_one_use_yield):
+            init_table = Test.set()
+
+            with WAL(Test, Test_WAL.trans_name) as log_inst:
+                Test.delete_table()
+                log_path = log_inst.log_file_path
+
+            assert len(Test.set()) == 0
+            WAL.rollback(Test, log_path)
+            assert Test.set() == init_table
+
+        def test_rollback_with_holes(self, db_one_usage: Test_WAL.Db_one_use_yield):
             init_table = Test.set()
             with WAL(Test, Test_WAL.trans_name) as log_inst:
                 Test.delete("id % 2 == 0")
@@ -922,8 +994,7 @@ class Test_WAL:
             WAL.rollback(Test, log_path)
             assert init_table == Test.set()
 
-        def test_rollback_nothing(self,
-                                  db_one_usage: tuple[list[tuple], dict[str, int]]):
+        def test_rollback_nothing(self, db_one_usage: Test_WAL.Db_one_use_yield):
             init_table = Test.set()
             with WAL(Test, Test_WAL.trans_name) as log_inst:
                 log_path = log_inst.log_file_path
@@ -931,8 +1002,7 @@ class Test_WAL:
             WAL.rollback(Test, log_path)
             assert init_table == Test.set()
 
-        def test_rollback_everything(self,
-                                     db_one_usage: tuple[list[tuple], dict[str, int]]):
+        def test_rollback_everything(self, db_one_usage: Test_WAL.Db_one_use_yield):
             init_table = Test.set()
             with WAL(Test, Test_WAL.trans_name) as log_inst:
                 Test.delete("id < 1000")

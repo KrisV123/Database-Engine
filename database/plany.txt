@@ -1,15 +1,54 @@
 DATABAZA:
 
-3, nejaka kontrola, ktora by kontrolovala, ci sedi byte_model a python premenne v atributoch
+3, (HOTOVO) nejaka kontrola, ktora by kontrolovala, ci sedi byte_model a python premenne v atributoch
 4, mozno nieco vymysliet, co kontroluje unikatnost klucov
-5, vytvaranie byte_modelu urcite poje nejako automatizovat (napriklad v metatreide alebo metodou)
+5, (HOTOVO) vytvaranie byte_modelu urcite pojde nejako automatizovat (napriklad v metatreide alebo metodou)
 6, urobit vyhladavanie prveho volneho miesta pomocou binary search v kominacii s prefix sum alebo fenwick
+7, asi nieco vymysliet na foreign key
+8, urobit vynutitelny check na tabulke, ze musi byt logovatelna
 
 Robota:
 
 1.  napisat test na unreadable_log parameter a iter_logs(corrupt=True)
-2.  Zamysliet sa, ci netreba lepsie testy na WAL
+2.  (NIKDY NEPOJDE) zariadit, aby metoda set() vracal spravny typ Table
+    (aj s vnutornymi parametrami), inac to v praxi nefunguje dobre
 
+3.  Urobit meta.bin pre kazdu tabulku, kde sa budu uchovavat
+    informacie o uz vlozenych datach ako:
+
+    byte_model, meno konstruktora, primary key, atd.
+
+    aby sa zachovala konzistencia, ked sa nieco zmeni a nechtiec sa necoruptli data.
+
+
+Model pre meta.json
+
+- meta bude source of truth
+- pri pri inicializovani tabulky sa prvykrat vytvori, ked uz bde existovat, tak bude sluzit na overovanie
+  (ak nebude sediet, hned error)
+- takza tabulka bude mat parameter schema, kde sa vyrvori runtime cache TableSchema, kde sa vsetko ulozi
+- zaroven sa tam vypozivaju odvodene parametre (inst_len, byte_model_list, ...)
+  od source of truth a nemusim pouzivat @cache
+- bude sa resetovat pri delete_table a musi sa zaroven cela schema logovat do WAL kvoli konzistencii
+- API na citanie a zapis s meta dokumentom musi byt ciste, aby sa dal v buducnosti zmenit na binarku
+
+TableSchema:
+
+- bude imutable po inicializacii
+- ked sa bude prvykrat inicializovat, pozrie sa do definicie tabulky,
+  ci tam nie su nejake vynutene definicie, napr ('__byte_model__', ...), jediny mozny zasah od programatora
+- inac sa uz menit nebude dat
+- TableSchema sa bude inicializovat podobne ako lazy singleton (ked to bude prva operacia potrebovat)
+
+Momentalne data v meta.json
+
+- meno modelu
+- vsetky atributy
+- byte_model
+- cesta k folderu s modelom
+
+Po tomto vsetkom, bude trieda ako vizual pre uzivatela a konfiguracia ale jednotny zdroj pravdy je meta.
+Jedina poziadavka je, ze clovek nemoze rucne manipulovat s meta.json (Mozno casom vynutit cez OS)
 ____________________________________________________________________________________
 
 TEST 1:

@@ -19,7 +19,7 @@ from typing import (
     Concatenate, Generic, overload
 )
 if TYPE_CHECKING:
-    from database.tools.BaseModel import HighBaseModel
+    from database.tools.core.HighBaseModel import HighBaseModel
 
 from database.tools.varint import VarInt
 
@@ -111,7 +111,7 @@ class Header:
     model_name: str = field(default_factory=lambda: '')
     """
     30 reserved bytes in utf-8 encoding.
-    NEEDS TO BE SETTED MANUALY thru WAL._change header method
+    NEEDS TO BE SETTED MANUALY thrue WAL._change header method
     cause theoretically, multiple table requests can be passed into one WAL object
     (even it is not recomended) and can't deteministicly decide.
     It's for documentation purposes of log file, if needed.
@@ -133,9 +133,14 @@ class Log_file_struct:
 
     LOG STRUCTURE:\n
 
-        1.  operator (x01: SEND, x02. UPDATE, x03. DELETE), SIZE: (static) 1 Byte\n
+        1.  operator (x01: SEND, x02: UPDATE, x03: DELETE, x04: DELETE_TABLE), SIZE: (static) 1 Byte\n
         2.  old_data_exist: (x01: yes, x00: No) SIZE: (static) 1 Byte\n
         3.  old_data, SIZE: (dynamic) inst_len() in LowBaseModel if old_data_exist is x01 else nothing\n
+            (
+                in case TELETE_TABLE (x04), old data will contain snapshot of tombstone file
+                and VarInt with snapshot as prefix.
+                Structure: old_data_length (dynamic) stored as VarInt, old_data (old_data_length)
+            )
         4.  new_data_exist: (x01: yes, x00: No) SIZE: (static) 1 Byte\n
         5.  new_data, SIZE: (dynamic) inst_len() in LowBaseModel if old_data_exist is x01 else nothing\n
         6.  old_checksum, SIZE: (dynamic) 4 Bytes if old_data_exist is x01 else nothing\n
@@ -169,10 +174,11 @@ class WAL:
 
     Creates file that stores log about every mutation of the database.
     File stores inside folder {model_name}/data/wal_logs. Folder with log file
-    will be created if does not exist.
+    will be created, if does not exist.
     """
 
     log_group_size = 50
+    """decides, how many log changes have to be modified to be flushed into disk"""
 
     try:
         # for POSIX platforms
@@ -397,7 +403,7 @@ class WAL:
                                 [Callable[Concatenate[WAL, P_d], R_d]], Callable[P_d, R_d]
                             ]:
         """
-        recomended way to log transaction thru decorator.
+        recomended way to log transaction thrue decorator.
         WAL instance is prefilled as first argument. Needs to be reserved for that.
         """
 
@@ -411,10 +417,11 @@ class WAL:
 
     @dataclass(slots=True)
     class Entry:
-        operator: str
+        operator: Literal['SEND', 'UPDATE', 'DELETE', 'DELETE_TABLE']
         start_pnt: int | None
         old_data: bytes | None
         new_data: bytes | None
+
 
     def __call__(self, entry: Entry) -> None:
         """create and write log into log file based on params"""
@@ -429,7 +436,7 @@ class WAL:
     def _handle_offsets(self, log_len: int) -> None:
         """
         helper method, that creates delta offset table.
-        Internam method, not meant to be used.
+        Internal method, not meant to be used.
         """
 
         varint_delta_offset = VarInt.to_varint(self.lst_offset)
@@ -445,8 +452,9 @@ class WAL:
                 assert entry.old_data is None
                 assert entry.new_data is not None
 
+                entry.start_pnt = self.empty_space_pnt
+
                 if not self.db_full:
-                    entry.start_pnt = self.empty_space_pnt
                     entry.old_data = self.model.read_bytes(
                         entry.start_pnt,
                         entry.start_pnt + self.model.inst_len()
@@ -461,7 +469,6 @@ class WAL:
                     else:
                         self.empty_space_pnt = new_empty_space
                 else:
-                    entry.start_pnt = self.empty_space_pnt
                     self.empty_space_pnt += self.model.inst_len()
 
             case 'UPDATE':
@@ -480,6 +487,16 @@ class WAL:
                 else:
                     if entry.start_pnt < self.empty_space_pnt:
                         self.empty_space_pnt = entry.start_pnt
+            case 'DELETE_TABLE':
+                assert entry.start_pnt is None
+                assert entry.old_data is not None
+                assert entry.new_data is None
+
+                self.db_full = False
+                self.empty_space_pnt = 0
+
+                # start_pnt is just placeholder value
+                entry.start_pnt = 0
             case _:
                 raise TypeError("operation or value for operator does not exist")
 
@@ -489,6 +506,10 @@ class WAL:
 
         assert entry.start_pnt is not None
         assert entry.start_pnt >= 0
+
+        if entry.operator == 'DELETE_TABLE':
+            assert entry.old_data is not None
+            entry.old_data = VarInt.to_varint(len(entry.old_data)) + entry.old_data
 
         byte_start_pnt = VarInt.to_varint(entry.start_pnt)
 
@@ -507,6 +528,8 @@ class WAL:
                 operation_idx = b'\x02'
             case 'DELETE':
                 operation_idx = b'\x03'
+            case 'DELETE_TABLE':
+                operation_idx = b'\x04'
             case _:
                 raise TypeError("operation or value for operator does not exist")
 
@@ -531,7 +554,7 @@ class WAL:
     class Log_data:
         """dataclass for storing log data in memory"""
 
-        operator: Literal['SEND', 'UPDATE', 'DELETE']
+        operator: Literal['SEND', 'UPDATE', 'DELETE', 'DELETE_TABLE']
         old_data_exist: bool
         old_data: bytes | None
         new_data_exist: bool
@@ -565,6 +588,8 @@ class WAL:
                 operator = 'UPDATE'
             case 3:
                 operator = 'DELETE'
+            case 4:
+                operator = 'DELETE_TABLE'
             case _:
                 raise TypeError("operation or value for operator does not exist")
         pnt += 1
@@ -573,9 +598,17 @@ class WAL:
         pnt += 1
 
         if old_data_exist:
-            end = pnt + inst_len
-            old_data = bytes(buffer[pnt: end])
-            pnt = end
+            if operator == 'DELETE_TABLE':
+                varint_bytes = VarInt.find_fst_varint(buffer[pnt:])
+                old_data_length = VarInt.to_int(varint_bytes)[0]
+                pnt += len(varint_bytes)
+                end = pnt + old_data_length
+                old_data = bytes(buffer[pnt: end])
+                pnt = end
+            else:
+                end = pnt + inst_len
+                old_data = bytes(buffer[pnt: end])
+                pnt = end
         else:
             old_data = None
 
@@ -629,13 +662,13 @@ class WAL:
                   model: type[HighBaseModel],
                   path: str | Path,
                   corrupt: bool=False) -> Generator[
-                        WAL.Log_data | Corrupt_log_data,
+                        Log_data | Corrupt_log_data,
                         None, None
                 ]:
         """
         Generator that iterate log file and return Log_data dataclass
-        from each log with each file. If corrupt is true, logs will be iterated thru
-        offset table an if log is corrupted (can't be interpreted with iter_log),
+        from each log with each file. If corrupt is true, logs will be iterated thrue
+        offset table. If log is corrupted (can't be interpreted with iter_log),
         log will be interpreted with Corrupt_log_data dataclass
 
         Generator opens file and needs to be closed to release file descriptor
@@ -767,6 +800,9 @@ class WAL:
                     case 'DELETE':
                         utils.commit_delete_log(
                             inst_len, log_pnt, tomb_f, log_f_mm, log_f.fileno(), data)
+                    case 'DELETE_TABLE':
+                        utils.commit_delete_table_log(
+                            log_pnt, log_f_mm, tomb_f, log_f.fileno(), data)
                 log_pnt += data.log_length
 
             obj._set_log_seg_checksum(log_f_mm, path)
@@ -782,10 +818,21 @@ class WAL:
         @classmethod
         def raise_corruption(cls) -> OSError:
             raise OSError('coruption occured while writing instance')
-        
+
         @classmethod
         def raise_missing_data(cls) -> ValueError:
             raise ValueError("log doesn't have any data to apply")
+
+        @classmethod
+        def set_log_to_applyed(cls,
+                               log_pnt: int,
+                               log_f_mm: mmap.mmap,
+                               log_f_fd: int,
+                               data_struct: WAL.Log_data):
+            apply_pnt = log_pnt + data_struct.log_length - 1
+            log_f_mm[apply_pnt] = 1
+            log_f_mm.flush(apply_pnt, 1)
+            os.fsync(log_f_fd)
 
         @classmethod
         def commit_send_log(cls,
@@ -805,16 +852,18 @@ class WAL:
             tomb.seek(0, 2)
             tomb_size = tomb.tell()
             if tomb_size > tomb_segment:
-                tomb.seek(tomb_segment, 0)
+                tomb.seek(tomb_segment)
                 flag: int = tomb.read(1)[0] | (1 << (7 - tomb_offset))
                 flag_byte = flag.to_bytes(1, byteorder='little', signed=False)
             else:
                 flag_byte = b'\x80'
 
-            data.seek(glob_pnt, 0)
-            tomb.seek(tomb_segment, 0)
-            if data_struct.new_data is not None:
-                data.write(data_struct.new_data)
+            data.seek(glob_pnt)
+            tomb.seek(tomb_segment)
+
+            new_data = data_struct.new_data
+            if new_data is not None:
+                data.write(new_data)
             else:
                 cls.raise_missing_data()
             tomb.write(flag_byte)
@@ -824,16 +873,13 @@ class WAL:
             tomb.flush()
             os.fsync(tomb.fileno())
 
-            data.seek(glob_pnt, 0)
+            data.seek(glob_pnt)
             rewrite_data = data.read(inst_len)
-            tomb.seek(tomb_segment, 0)
+            tomb.seek(tomb_segment)
             rewrite_tomb = tomb.read(1)
             if (crc32(rewrite_data) == data_struct.new_checksum and
                 rewrite_tomb == flag_byte):
-                apply_pnt = log_pnt + data_struct.log_length - 1
-                log_f_mm[apply_pnt] = 1
-                log_f_mm.flush(apply_pnt, 1)
-                os.fsync(log_f_fd)
+                cls.set_log_to_applyed(log_pnt, log_f_mm, log_f_fd, data_struct)
             else:
                 cls.raise_corruption()
 
@@ -848,21 +894,20 @@ class WAL:
             """apply UPDATE log into database"""
 
             glob_pnt = data_struct.db_pointer
-            data.seek(glob_pnt, 0)
-            if data_struct.new_data is not None:
-                data.write(data_struct.new_data)
+            data.seek(glob_pnt)
+
+            new_data = data_struct.new_data
+            if new_data is not None:
+                data.write(new_data)
             else:
                 cls.raise_missing_data()
             data.flush()
             os.fsync(data.fileno())
 
-            data.seek(glob_pnt, 0)
+            data.seek(glob_pnt)
             rewrite_data = data.read(inst_len)
             if crc32(rewrite_data) == data_struct.new_checksum:
-                apply_pnt = log_pnt + data_struct.log_length - 1
-                log_f_mm[apply_pnt] = 1
-                log_f_mm.flush(apply_pnt, 1)
-                os.fsync(log_f_fd)
+                cls.set_log_to_applyed(log_pnt, log_f_mm, log_f_fd, data_struct)
             else:
                 cls.raise_corruption()
 
@@ -880,22 +925,42 @@ class WAL:
             tomb_pnt = glob_pnt // inst_len
             tomb_segment, tomb_offset = tomb_pnt // 8, tomb_pnt % 8
 
-            tomb.seek(tomb_segment, 0)
+            tomb.seek(tomb_segment)
             flag: int = tomb.read(1)[0] & ~(1 << (7 - tomb_offset))
             flag_byte = flag.to_bytes(1, byteorder='little', signed=False)
 
-            tomb.seek(tomb_segment, 0)
+            tomb.seek(tomb_segment)
             tomb.write(flag_byte)
             tomb.flush()
             os.fsync(tomb.fileno())
 
-            tomb.seek(tomb_segment, 0)
+            tomb.seek(tomb_segment)
             rewrite_data = tomb.read(1)
             if rewrite_data == flag_byte:
-                apply_pnt = log_pnt + data_struct.log_length - 1
-                log_f_mm[apply_pnt] = 1
-                log_f_mm.flush(apply_pnt, 1)
-                os.fsync(log_f_fd)
+                cls.set_log_to_applyed(log_pnt, log_f_mm, log_f_fd, data_struct)
+            else:
+                cls.raise_corruption()
+
+        @classmethod
+        def commit_delete_table_log(cls,
+                                    log_pnt: int,
+                                    log_f_mm: mmap.mmap,
+                                    tomb: BufferedRandom,
+                                    log_f_fd: int,
+                                    data_struct: WAL.Log_data) -> None:
+            tomb.seek(0, 2)
+            tomb_size = tomb.tell()
+
+            tomb.seek(0, 0)
+            tomb.truncate(0)
+            tomb.truncate(tomb_size)
+            tomb.flush()
+            os.fsync(tomb.fileno())
+
+            tomb.seek(0)
+            tomb_data = tomb.read()
+            if int.from_bytes(tomb_data) == 0:
+                cls.set_log_to_applyed(log_pnt, log_f_mm, log_f_fd, data_struct)
             else:
                 cls.raise_corruption()
 
@@ -963,7 +1028,7 @@ class WAL:
     def check_consistency(cls, model: type[HighBaseModel], path: str | Path) -> Log_file_report:
         """
         method that tries to check, if log file is in valid state.
-        Returns Log_file_report dataclass with data about consistancy
+        Returns Log_file_report dataclass with data about consistency
         """
 
         if isinstance(path, str):
@@ -988,7 +1053,7 @@ class WAL:
             header_size = Header_info.header_size
             offset_tbl_start = len(log_mv) - offset_tbl_size
             offsets_checksum = crc32(log_mv[offset_tbl_start:])
-            log_checksum = crc32(log_mv[header_size:offset_tbl_start])
+            log_checksum = crc32(log_mv[header_size: offset_tbl_start])
 
             if log_checksum == header.logs_checksum:
                 pnt = header_size
@@ -1050,6 +1115,7 @@ class WAL:
         obj._change_header('status', status_consts['ROLLBACKING'], path)
 
         offset_lst = obj.get_offsets(path)
+
         with ExitStack() as stack:
             data_path = model.path / 'data/data.bin'
             tomb_path = model.path / 'data/tombstone.map'
@@ -1057,11 +1123,15 @@ class WAL:
             data_len = data_path.stat().st_size
             tomb_len = tomb_path.stat().st_size
 
-            if log_len != 0 and data_len != 0 and tomb_len != 0:
-                log_f = stack.enter_context(open(path, 'r+b'))
-                log_mm = stack.enter_context(
-                    mmap.mmap(log_f.fileno(), 0, access=mmap.ACCESS_WRITE))
-                log_mv = stack.enter_context(memoryview(log_mm))
+            if log_len == 0:
+                return
+
+            log_f = stack.enter_context(open(path, 'r+b'))
+            log_mm = stack.enter_context(
+                mmap.mmap(log_f.fileno(), 0, access=mmap.ACCESS_WRITE))
+            log_mv = stack.enter_context(memoryview(log_mm))
+
+            if data_len != 0 and tomb_len != 0:
                 data_f = stack.enter_context(open(data_path, 'r+b'))
                 data_mm = stack.enter_context(
                     mmap.mmap(data_f.fileno(), 0, access=mmap.ACCESS_WRITE))
@@ -1079,8 +1149,8 @@ class WAL:
                     continue
                 glob_pnt = data.db_pointer
                 match data.operator:
-                    case'SEND':
-                        if data.old_data_exist and data.old_data is not None:
+                    case 'SEND':
+                        if data.old_data is not None:
                             data_mv[glob_pnt: glob_pnt + model.inst_len()] = data.old_data
                             data_mm.flush(glob_pnt, model.inst_len())
                             os.fsync(data_f.fileno())
@@ -1092,7 +1162,7 @@ class WAL:
                             tomb_mm.flush(segment, 1)
                             os.fsync(tomb_f.fileno())
                     case 'UPDATE':
-                        if data.old_data_exist and data.old_data is not None:
+                        if data.old_data is not None:
                             data_mv[glob_pnt: glob_pnt + model.inst_len()] = data.old_data
                             data_mm.flush(glob_pnt, model.inst_len())
                             os.fsync(data_f.fileno())
@@ -1105,6 +1175,14 @@ class WAL:
                         tomb_mv[segment] = mask | (1 << (7 - offfset))
                         tomb_mm.flush(segment, 1)
                         os.fsync(tomb_f.fileno())
+                    case 'DELETE_TABLE':
+                        if data.old_data is not None:
+                            tomb_f.seek(0)
+                            tomb_f.write(data.old_data)
+                            tomb_mm.flush()
+                            os.fsync(tomb_f.fileno())
+                        else:
+                            raise ValueError('something wierd happend')
                     case _:
                         raise TypeError("operation or value for operator does not exist")
 

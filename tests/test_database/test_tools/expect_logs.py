@@ -1,7 +1,7 @@
 #variables for test_log_comps.py
 
-from tests.database.test_model.test import Test
 from database.tools.wal_comp import WAL
+from database.tools.varint import VarInt
 
 expect_send_log = [
     WAL.Log_data(
@@ -300,5 +300,21 @@ expect_delete_log = [
         log_pnt=689,
         applied=True,
         log_length=118
+    )
+]
+
+expect_delete_table_log = [
+    WAL.Log_data(
+        operator='DELETE_TABLE',
+        old_data_exist=True,
+        old_data = b'\xFF\xe0',
+        new_data_exist=False,
+        new_data=None, 
+        old_checksum=3488289398,
+        new_checksum=None,
+        db_pointer=0,
+        log_pnt=100,
+        applied=True,
+        log_length=12
     )
 ]

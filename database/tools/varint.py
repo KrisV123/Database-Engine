@@ -24,7 +24,7 @@ class VarInt:
         ])
 
     @staticmethod
-    def to_int(byte_buff: bytes | memoryview | mmap.mmap) -> list[int]:
+    def to_int(byte_buff: bytes | bytearray | memoryview | mmap.mmap) -> list[int]:
         ans_stack = []
         acc, iiter = 0, 0
 
@@ -37,7 +37,7 @@ class VarInt:
         return ans_stack
 
     @staticmethod
-    def find_fst_varint(bytes: bytes | memoryview | mmap.mmap) -> bytes:
+    def find_fst_varint(bytes: bytes | memoryview | mmap.mmap) -> bytearray:
         bytearr = bytearray()
         for byte in bytes:
             bytearr.append(byte)

@@ -1,9 +1,14 @@
 /.vscode
 /.mypy_cache
 /.pytest_cache
+
 /tester.py
 /database/person_model/__pycache__
 /database/tools/__pycache__
-/tests/database/tools/__pycache__
+/database/tools/core/__pycache__
+
+/tests/.pytest_cache
+/tests/test_database/test_tools/__pycache__
 /tests/test_model/__pycache__
-/tests/database/test_model/__pycache__
+/tests/test_database/test_model/__pycache__
+/tests/test_database/test_tools/test_core/__pycache__

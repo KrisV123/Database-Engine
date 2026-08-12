@@ -1,0 +1,16 @@
+{
+    "model_name": "Test",
+    "attributes": [
+        "id",
+        "name",
+        "surname",
+        "birth_date",
+        "email",
+        "phone_num"
+    ],
+    "primary_key": [
+        "id"
+    ],
+    "byte_model": "< l 20s 20s 10s 40s 13s",
+    "model_path": "c:\\Users\\krikr\\Desktop\\Python\\database_engine\\tests\\test_database\\test_model"
+}

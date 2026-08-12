@@ -1,5 +1,4 @@
 from __future__ import annotations
-import struct
 import mmap
 from pathlib import Path
 from math import ceil
@@ -9,6 +8,7 @@ from typing import Any, TypeVar, ClassVar
 
 from database.tools.core.types import AcceptTypes, STRUCT_FORMAT_INFO, PLACEHOLDER
 from database.tools.core.row import RowList
+from database.tools.core.table_schema import TableSchema
 
 class LowBaseModel:
     try:
@@ -18,24 +18,35 @@ class LowBaseModel:
         # for Windows platform
         _os_pg_align = mmap.ALLOCATIONGRANULARITY #type:ignore
 
-    byte_model: ClassVar[str] = ''
     path: ClassVar[Path] = Path()
-    primary_key: ClassVar[tuple[str, ...]] = ('',)
-    __slots__ = [] # variable created in metaclass
-
     precalc_table = True # precalculate table for first zero in byte
-    _packer: ClassVar[struct.Struct | None] # variable created in metaclass
+    _table_schema: ClassVar[TableSchema | None] = None
 
     @classmethod
-    def get_packer(cls) -> struct.Struct:
+    def get_table_schema(cls) -> TableSchema:
         """
-        cache precompiled packer object with singleton pattern.
-        Use this instead of _packer
+        cache precompiled model metadata, that returns in TableSchema.
+        TableSchema contains ground truth data about model and derived metadata.
+        
+        TableSchema is also using lazy singleton patern to evaluate.
+
+        In first runtime evaluation, function checks, if meta.json exists.
+        If not, meta.json is created from current data.
+        If yes, meta.json will be used to check, if table data are correct.
         """
 
-        if cls._packer is None:
-            cls._packer = struct.Struct(cls.byte_model)
-        return cls._packer
+        if cls._table_schema is None:
+            meta_exists = (cls.path / 'data/meta.json').exists()
+            meta_size = (cls.path / 'data/meta.json').stat().st_size
+            if meta_exists and meta_size == 0:
+                cls._table_schema = TableSchema.init_meta(cls)
+            elif meta_exists:
+                cls._table_schema = TableSchema.check_table_schema(cls, cls.path / 'data/meta.json')
+            else:
+                cls._table_schema = TableSchema.init_meta(cls)
+            return cls._table_schema
+        else:
+            return cls._table_schema
 
     @staticmethod
     def sanitize(bstream: bytes) -> bytes:
@@ -55,32 +66,34 @@ class LowBaseModel:
     def getstate(self) -> bytes:
         """change instance into bytes"""
 
+        table_schema = self.get_table_schema()
         attrs = []
-        prefix = bytearray(b'\x00' * self.get_mask_len())
-        for idx, attr in enumerate(self.__slots__):
+        prefix = bytearray(b'\x00' * table_schema.mask_len)
+        for idx, attr in enumerate(table_schema.attributes):
             val = getattr(self, attr)
 
             if val is None:
                 self._flip_prefix_bit(prefix, idx)
-                ctype = self.get_attr_ctype(attr)[-1]
+                ctype = table_schema.attr_ctype_dict[attr][-1]
                 py_type = STRUCT_FORMAT_INFO[ctype]['py_type']
                 plcholder = PLACEHOLDER[py_type]
                 attrs.append(plcholder)
             else:
                 attrs.append(val.encode('utf-8') if isinstance(val, str) else val)
-        return bytes(prefix) + self.get_packer().pack(*attrs)
+        return bytes(prefix) + self.get_table_schema().packer.pack(*attrs)
 
     @classmethod
     def setstate(cls, bstream: bytes) -> LowBaseModel:
         """change bytes into instance based on struct model from the class"""
 
-        prefix_len = cls.get_mask_len()
+        table_schema = cls.get_table_schema()
+        prefix_len = table_schema.mask_len
         prefix = bstream[:prefix_len]
-        data = cls.get_packer().unpack(bstream[prefix_len:])
+        data = table_schema.packer.unpack(bstream[prefix_len:])
 
         decode_data = []
         for idx, val in enumerate(data):
-            if cls.check_none_value(prefix, cls.__slots__[idx]):
+            if cls.check_none_value(prefix, table_schema.attributes[idx]):
                 val = None
             elif isinstance(val, bytes):
                 val = cls.sanitize(val).decode('utf-8')
@@ -129,97 +142,10 @@ class LowBaseModel:
             mm[rel_start: rel_start + (end - start)] = txt
 
     @classmethod
-    @cache
-    def inst_len(cls) -> int:
-        """return size of instance of database in bytes"""
-
-        return cls.get_mask_len() + struct.calcsize(cls.byte_model)
-
-    @classmethod
-    @cache
-    def get_endianness_symbol(cls) -> str:
-        """
-        returns endianness symbol from cls.byte_model string.
-        If there isn't any endianness symbol, empty string will be returend
-        """
-
-        byte_model = cls.byte_model.lstrip(' ')
-        fst_char = byte_model[0]
-        return fst_char if fst_char in ('@', '=', '<', '>', '!') else ''
-
-    @classmethod
-    @cache
-    def get_byte_model_list(cls) -> list[str]:
-        """return list of every C type from cls.byte_model in list"""
-
-        byte_model = cls.byte_model.lstrip(' ')
-
-        if len(byte_model) > 0 and byte_model[0] in ('@', '=', '<', '>', '!'):
-            byte_model = byte_model[1:]
-
-        type_list, num_list = [], []
-        for char in byte_model:
-            if char == ' ':
-                continue
-            if char.isdigit():
-                num_list.append(char)
-            elif isinstance(char, str):
-                if char in ('s', 'p') and len(num_list) == 0:
-                    raise AttributeError(
-                        'invalid byte model. Types s and p need to have byte ammount'
-                    )
-                typ = ''.join(num_list) + char
-                type_list.append(typ)
-                num_list = []
-        return type_list
-
-    @classmethod
-    @cache
-    def get_attr_ord(cls, attr: str) -> int:
-        """return attribute order from database. Not recomended to use"""
-
-        count = 0
-        for val in cls.__slots__:
-            if val == attr:
-                break
-            else:
-                count += 1
-            if count == len(cls.__slots__):
-                raise AttributeError('attribute not inside a model')
-        return count
-
-    @classmethod
-    @cache
-    def get_offset(cls, attr: str) -> int:
-        """
-        returns parameter offset in bytes.
-        Couting starts from first attribute, not biggining of mask.
-        Not recomended to use
-        """
-
-        ctype_list = cls.get_byte_model_list()
-        offset = 0
-        for idx, i in enumerate(cls.__slots__):
-            if i == attr:
-                break
-            else:
-                bsize = struct.calcsize(ctype_list[idx])
-                offset += bsize
-        return offset
-
-    @classmethod
-    @cache
-    def get_attr_ctype(cls, attr: str) -> str:
-        """return C type of an attribute"""
-
-        type_list = cls.get_byte_model_list()
-        return type_list[cls.get_attr_ord(attr)]
-
-    @classmethod
     def get_bitmask_prefix(cls, offset: int) -> bytes:
         """return bytes, that represents offset"""
 
-        bit_len = len(cls.__slots__)
+        bit_len = len(cls.get_table_schema().attributes)
         byte_len = ceil(bit_len / 8)
         return cls.read_bytes(offset, offset + byte_len)
 
@@ -235,18 +161,10 @@ class LowBaseModel:
         return bitmask
 
     @classmethod
-    @cache
-    def get_mask_len(cls) -> int:
-        """returns mask size in bytes"""
-
-        bit_len = len(cls.__slots__)
-        return ceil(bit_len / 8)
-
-    @classmethod
     def check_none_value(cls, prefix: bytes | bytearray | memoryview, attr: str) -> bool:
         """checks if parameter have setted null value in prefix"""
 
-        attr_ord = cls.get_attr_ord(attr)
+        attr_ord = cls.get_table_schema().attr_ord_dict[attr]
         segment, offset = divmod(attr_ord, 8)
         return prefix[segment] & (1 << (7 - offset)) != 0
 
@@ -261,7 +179,7 @@ class LowBaseModel:
         if pnt < 0:
             raise IndexError("Function can't handle negative indexes")
 
-        inst_len = cls.inst_len()
+        inst_len = cls.get_table_schema().inst_len
         if pnt % inst_len != 0:
             raise IndexError('Pointer not on start of instance')
 
@@ -284,7 +202,7 @@ class LowBaseModel:
         data_size = (cls.path / 'data/data.bin').stat().st_size
         tomb_path = cls.path / 'data/tombstone.map'
 
-        inst_len = cls.inst_len()
+        inst_len = cls.get_table_schema().inst_len
         ammount = data_size // inst_len
 
         if ammount % 8 != 0:
@@ -310,13 +228,13 @@ class LowBaseModel:
         it will add new byte and set bit to 1.
         Internal method, not meant to be used
         """
-        
+
         tomb_path = cls.path / 'data/tombstone.map'
         if pnt is None:
             with open(tomb_path, 'a+b') as f:
                 f.write(bytes([1 << 7]))
         else:
-            inst_len = cls.inst_len()
+            inst_len = cls.get_table_schema().inst_len
             if pnt % inst_len != 0:
                 raise IndexError('Pointer not on start of instance')
 
@@ -330,7 +248,6 @@ class LowBaseModel:
                             access=mmap.ACCESS_WRITE,
                             offset = align_offset) as mm):
                 mm[rel_segment] |= (1 << (7 - offset))
-
 
     class _EmptySpaceUtils:
         """helper methods for find_empty_space method"""
@@ -363,7 +280,7 @@ class LowBaseModel:
             """
 
             if segment is not None and offset is not None:
-                return (segment * 8 + offset) * self._outer.inst_len()
+                return (segment * 8 + offset) * self._outer.get_table_schema().inst_len
             else:
                 return None
 
@@ -385,8 +302,6 @@ class LowBaseModel:
                 if byte == 0b11111111:
                     continue
                 if idx == 0:
-                    # SKONTROLOVAT !!!!! chyba v skip_bitmask (zly pocet bitov)
-
                     skip_mask = ((1 << begin_offset) - 1) << (8 - begin_offset)
                     byte |= skip_mask
                     if byte == 0b11111111:
@@ -414,17 +329,17 @@ class LowBaseModel:
         """
 
         utils = cls._EmptySpaceUtils(cls)
-        inst_len = cls.inst_len()
+        inst_len = cls.get_table_schema().inst_len
         if start_pnt is not None and start_pnt % inst_len != 0:
             raise ValueError("start_pointer is not aligned with the instances")
 
         with ExitStack() as stack:
             tomb_path = cls.path / 'data/tombstone.map'
             f = stack.enter_context(open(tomb_path, 'rb'))
-            
+
             if tomb_path.stat().st_size == 0:
                 return None
-            
+
             mm = stack.enter_context(mmap.mmap(f.fileno(), 0, access=mmap.ACCESS_READ))
             mv = stack.enter_context(memoryview(mm))
 
@@ -439,7 +354,7 @@ class LowBaseModel:
             if len(mv) < 8:
                 fst_q_align = len(mv)
             else:
-                fst_q_align = min((begin_segment >> 8) * 8 + 8, (len(mv) >> 8) * 8)
+                fst_q_align = min((begin_segment >> 3) * 8 + 8, (len(mv) >> 3) * 8)
             segment, offset = utils.smaller_blocks(
                 mv, begin_segment, begin_offset, fst_q_align, precalc_table)
 
@@ -476,12 +391,12 @@ class LowBaseModel:
 
         with open(cls.path / 'data/tombstone.map', 'rb') as f:
             return f.read()
-    
+
     @classmethod
     def check_structure_sz_consistency(cls, data_size: int, tomb_size: int) -> None:
         """check consistency in size between data.bin and tombstone.map"""
 
-        data_inst_count, mod = divmod(data_size, cls.inst_len())
+        data_inst_count, mod = divmod(data_size, cls.get_table_schema().inst_len)
         if mod != 0:
             raise OSError("size of data.bin is incosistent")
         tomb_inst_count = tomb_size * 8

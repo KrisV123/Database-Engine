@@ -3,6 +3,7 @@ import mmap
 import os
 import pprint
 
+import json
 from zlib import crc32
 from contextvars import ContextVar
 from pathlib import Path
@@ -133,20 +134,24 @@ class Log_file_struct:
 
     LOG STRUCTURE:\n
 
-        1.  operator (x01: SEND, x02: UPDATE, x03: DELETE, x04: DELETE_TABLE), SIZE: (static) 1 Byte\n
-        2.  old_data_exist: (x01: yes, x00: No) SIZE: (static) 1 Byte\n
-        3.  old_data, SIZE: (dynamic) inst_len() in LowBaseModel if old_data_exist is x01 else nothing\n
+        1.  operator: (x01: SEND, x02: UPDATE, x03: DELETE, x04: DELETE_TABLE), SIZE: (static) 1 Byte\n
+        2.  meta_exist: (x01: yes, x00: No) SIZE: (static) 1 Byte\n
+        3.  meta: SIZE: (dynamic) first part is VarInt size and next up data with VarInt length if meta_exist is x01 else nothing\n
+            (meta is mainly for TableSchema in meta.json, but can be used for anything extra)
+        4.  old_data_exist: (x01: yes, x00: No) SIZE: (static) 1 Byte\n
+        5.  old_data, SIZE: (dynamic) inst_len() in LowBaseModel if old_data_exist is x01 else nothing\n
             (
                 in case TELETE_TABLE (x04), old data will contain snapshot of tombstone file
                 and VarInt with snapshot as prefix.
                 Structure: old_data_length (dynamic) stored as VarInt, old_data (old_data_length)
             )
-        4.  new_data_exist: (x01: yes, x00: No) SIZE: (static) 1 Byte\n
-        5.  new_data, SIZE: (dynamic) inst_len() in LowBaseModel if old_data_exist is x01 else nothing\n
-        6.  old_checksum, SIZE: (dynamic) 4 Bytes if old_data_exist is x01 else nothing\n
-        7.  new_checksum, SIZE: (dynamic) 4 Bytes if new_data_exist is x01 else nothing\n
-        8.  pointer, SIZE: (dynamic) stored as VarInt\n
-        9.  applied (x00: No, x01: Yes), DEFAULT: x00, SIZE: (static) 1 Byte\n
+        6.  new_data_exist: (x01: yes, x00: No) SIZE: (static) 1 Byte\n
+        7.  new_data, SIZE: (dynamic) inst_len() in LowBaseModel if old_data_exist is x01 else nothing\n
+        8.  meta_checksum, SIZE: (dynamic) 4 Bytes if meta_exist is x01 else nothing\n
+        9.  old_checksum, SIZE: (dynamic) 4 Bytes if old_data_exist is x01 else nothing\n
+        10. new_checksum, SIZE: (dynamic) 4 Bytes if new_data_exist is x01 else nothing\n
+        11. pointer, SIZE: (dynamic) stored as VarInt\n
+        12. applied (x00: No, x01: Yes), DEFAULT: x00, SIZE: (static) 1 Byte\n
 
     (this structure only applyes for bytes in memory)
     """
@@ -172,7 +177,10 @@ class WAL:
     """
     Append Only Write-Ahead-Log.\n
 
+    Tool for ensuring atomicity and integrity of transaction\n
+
     Creates file that stores log about every mutation of the database.
+    After creating while file, changes will be applyed to database.
     File stores inside folder {model_name}/data/wal_logs. Folder with log file
     will be created, if does not exist.
     """
@@ -421,6 +429,7 @@ class WAL:
         start_pnt: int | None
         old_data: bytes | None
         new_data: bytes | None
+        meta: bytes | None
 
 
     def __call__(self, entry: Entry) -> None:
@@ -451,13 +460,15 @@ class WAL:
                 assert entry.start_pnt is None
                 assert entry.old_data is None
                 assert entry.new_data is not None
+                assert entry.meta is None
 
                 entry.start_pnt = self.empty_space_pnt
+                table_schema = self.model.get_table_schema()
 
                 if not self.db_full:
                     entry.old_data = self.model.read_bytes(
                         entry.start_pnt,
-                        entry.start_pnt + self.model.inst_len()
+                        entry.start_pnt + table_schema.inst_len
                     )
                     new_empty_space = self.model.find_empty_space(
                         start_pnt=self.empty_space_pnt
@@ -469,17 +480,19 @@ class WAL:
                     else:
                         self.empty_space_pnt = new_empty_space
                 else:
-                    self.empty_space_pnt += self.model.inst_len()
+                    self.empty_space_pnt += table_schema.inst_len
 
             case 'UPDATE':
                 assert entry.start_pnt is not None
                 assert entry.old_data is not None
                 assert entry.new_data is not None
+                assert entry.meta is None
 
             case 'DELETE':
                 assert entry.start_pnt is not None
                 assert entry.old_data is not None
                 assert entry.new_data is None
+                assert entry.meta is None
 
                 if self.db_full:
                     self.db_full = False
@@ -491,6 +504,7 @@ class WAL:
                 assert entry.start_pnt is None
                 assert entry.old_data is not None
                 assert entry.new_data is None
+                assert entry.meta is not None
 
                 self.db_full = False
                 self.empty_space_pnt = 0
@@ -509,10 +523,16 @@ class WAL:
 
         if entry.operator == 'DELETE_TABLE':
             assert entry.old_data is not None
+            assert entry.meta is not None
             entry.old_data = VarInt.to_varint(len(entry.old_data)) + entry.old_data
+            entry.meta = VarInt.to_varint(len(entry.meta)) + entry.meta
 
         byte_start_pnt = VarInt.to_varint(entry.start_pnt)
 
+        meta_checksum = (
+            crc32(entry.meta).to_bytes(4, 'little', signed=False)
+            if entry.meta is not None else b''
+        )
         old_checksum = (
             crc32(entry.old_data).to_bytes(4, 'little', signed=False)
             if entry.old_data is not None else b''
@@ -535,11 +555,13 @@ class WAL:
 
         return b''.join((
             operation_idx,
+            b'\x00' if entry.meta is None else b'\x01',
+            entry.meta if entry.meta is not None else b'',
             b'\x00' if entry.old_data is None else b'\x01',
             entry.old_data if entry.old_data is not None else b'',
             b'\x00' if entry.new_data is None else b'\x01',
             entry.new_data if entry.new_data is not None else b'',
-            old_checksum, new_checksum, byte_start_pnt, b'\x00'
+            meta_checksum, old_checksum, new_checksum, byte_start_pnt, b'\x00'
         ))
 
 
@@ -555,10 +577,13 @@ class WAL:
         """dataclass for storing log data in memory"""
 
         operator: Literal['SEND', 'UPDATE', 'DELETE', 'DELETE_TABLE']
+        meta_exist: bool
+        meta: bytes | None
         old_data_exist: bool
         old_data: bytes | None
         new_data_exist: bool
         new_data: bytes | None
+        meta_checksum: int | None
         old_checksum: int | None
         new_checksum: int | None
         db_pointer: int
@@ -577,7 +602,7 @@ class WAL:
         Returns log informations in dictionary
         """
 
-        inst_len = model.inst_len()
+        inst_len = model.get_table_schema().inst_len
         checksum_size = 4
         begin_pnt = pnt
 
@@ -593,6 +618,19 @@ class WAL:
             case _:
                 raise TypeError("operation or value for operator does not exist")
         pnt += 1
+
+        meta_exist = bool(buffer[pnt])
+        pnt += 1
+
+        if meta_exist:
+            varint_bytes = VarInt.find_fst_varint(buffer[pnt:])
+            meta_length = VarInt.to_int(varint_bytes)[0]
+            pnt += len(varint_bytes)
+            end = pnt + meta_length
+            meta = bytes(buffer[pnt: end])
+            pnt = end
+        else:
+            meta = None
 
         old_data_exist = bool(buffer[pnt])
         pnt += 1
@@ -623,6 +661,14 @@ class WAL:
         else:
             new_data = None
 
+        if meta_exist:
+            end = pnt + checksum_size
+            bytes_meta_checksum = buffer[pnt: end]
+            pnt = end
+            meta_checksum = int.from_bytes(bytes_meta_checksum, 'little', signed=False)
+        else:
+            meta_checksum = None
+
         if old_data_exist:
             end = pnt + checksum_size
             bytes_old_checksum = buffer[pnt: end]
@@ -650,9 +696,10 @@ class WAL:
 
         return WAL.Log_data(
             operator,
+            meta_exist, meta,
             old_data_exist, old_data,
             new_data_exist, new_data,
-            old_checksum, new_checksum,
+            meta_checksum, old_checksum, new_checksum,
             db_pointer, begin_pnt,
             applied, log_length
         )
@@ -755,6 +802,8 @@ class WAL:
 
         with ExitStack() as stack:
             if not isinstance(obj, type):
+                inst_len = obj.model.get_table_schema().inst_len
+
                 log_f = stack.enter_context(open(obj.log_file_path, 'r+b'))
                 data_f = stack.enter_context(open(obj.model.path / 'data/data.bin', 'r+b'))
                 tomb_f = stack.enter_context(open(obj.model.path / 'data/tombstone.map', 'r+b'))
@@ -765,6 +814,8 @@ class WAL:
                 else:
                     return
             else:
+                inst_len = model.get_table_schema().inst_len
+
                 log_f = stack.enter_context(open(path, 'r+b'))
                 data_f = stack.enter_context(open(model.path / 'data/data.bin', 'r+b'))
                 tomb_f = stack.enter_context(open(model.path / 'data/tombstone.map', 'r+b'))
@@ -775,7 +826,6 @@ class WAL:
                 else:
                     return
 
-            inst_len = model.inst_len() if isinstance(obj, type) else obj.model.inst_len()
             offset_tbl_len = obj.get_header(path).offset_tbl_size
 
             log_end_pnt = len(log_f_mv) - offset_tbl_len
@@ -1089,7 +1139,7 @@ class WAL:
             if offsets_checksum != header.offset_tbl_checksum:
                 report.corrupt_offsets = True
                 report.consistent = False
-        
+
         if not ((status == status_consts['APPLIED'] and len(report.not_applied_list) == 0) or
                 (status == status_consts['ROLLBACKED'] and len(report.not_applied_list) == logs_count)):
             report.consistent = False
@@ -1122,6 +1172,7 @@ class WAL:
             log_len = path.stat().st_size
             data_len = data_path.stat().st_size
             tomb_len = tomb_path.stat().st_size
+            inst_len = model.get_table_schema().inst_len
 
             if log_len == 0:
                 return
@@ -1151,11 +1202,11 @@ class WAL:
                 match data.operator:
                     case 'SEND':
                         if data.old_data is not None:
-                            data_mv[glob_pnt: glob_pnt + model.inst_len()] = data.old_data
-                            data_mm.flush(glob_pnt, model.inst_len())
+                            data_mv[glob_pnt: glob_pnt + inst_len] = data.old_data
+                            data_mm.flush(glob_pnt, inst_len)
                             os.fsync(data_f.fileno())
                         else:
-                            inst_ord = glob_pnt // model.inst_len()
+                            inst_ord = glob_pnt // inst_len
                             segment, offfset = inst_ord // 8, inst_ord % 8
                             mask = tomb_mv[segment]
                             tomb_mv[segment] = mask & ~(1 << (7 - offfset))
@@ -1163,24 +1214,41 @@ class WAL:
                             os.fsync(tomb_f.fileno())
                     case 'UPDATE':
                         if data.old_data is not None:
-                            data_mv[glob_pnt: glob_pnt + model.inst_len()] = data.old_data
-                            data_mm.flush(glob_pnt, model.inst_len())
+                            data_mv[glob_pnt: glob_pnt + inst_len] = data.old_data
+                            data_mm.flush(glob_pnt, inst_len)
                             os.fsync(data_f.fileno())
                         else:
                             raise ValueError('something wierd happend')
                     case 'DELETE':
-                        inst_ord = glob_pnt // model.inst_len()
+                        inst_ord = glob_pnt // inst_len
                         segment, offfset = inst_ord // 8, inst_ord % 8
                         mask = tomb_mv[segment]
                         tomb_mv[segment] = mask | (1 << (7 - offfset))
                         tomb_mm.flush(segment, 1)
                         os.fsync(tomb_f.fileno())
                     case 'DELETE_TABLE':
-                        if data.old_data is not None:
+                        if data.old_data is not None and data.meta is not None:
                             tomb_f.seek(0)
                             tomb_f.write(data.old_data)
+
+                            meta = open(model.path / 'data/meta.json', 'w+')
+
+                            json.dump(json.loads(data.meta.decode('utf-8')), meta, indent=4)
+                            meta.flush()
+                            os.fsync(meta.fileno())
                             tomb_mm.flush()
                             os.fsync(tomb_f.fileno())
+
+                            meta.seek(0)
+
+                            new_json_meta = json.dumps(json.load(meta))
+                            new_bytes_meta = new_json_meta.encode('utf-8')
+                            new_meta_checksum = crc32(VarInt.to_varint(len(new_bytes_meta)) + new_bytes_meta)
+                            if new_meta_checksum != data.meta_checksum:
+                                raise OSError('coruption occured while writing rollback data')
+
+                            meta.close()
+
                         else:
                             raise ValueError('something wierd happend')
                     case _:

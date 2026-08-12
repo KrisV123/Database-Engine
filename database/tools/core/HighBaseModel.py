@@ -2,7 +2,6 @@ from __future__ import annotations
 import struct
 import mmap
 from pathlib import Path
-from functools import cache
 from contextlib import ExitStack
 
 from database.tools.custom_eval import build_ast, eval_ast
@@ -15,18 +14,6 @@ from database.tools.core.table import Table
 from database.tools.core.row import RowList
 
 class HighBaseModel(LowBaseModel):
-
-    @classmethod
-    @cache
-    def _setup_attr_struct(cls) -> tuple[
-            dict[str, int], dict[str, str], dict[str, struct.Struct]
-        ]:
-        endianness = cls.get_endianness_symbol()
-
-        attr_offset = {attr: cls.get_offset(attr) for attr in cls.__slots__}
-        attr_ctype = {attr: cls.get_attr_ctype(attr) for attr in cls.__slots__}
-        attr_struct = {attr: struct.Struct(endianness + ctype) for attr, ctype in attr_ctype.items()}
-        return attr_offset, attr_ctype, attr_struct
 
     def send(self) -> None:
         """send instance into database"""
@@ -42,11 +29,11 @@ class HighBaseModel(LowBaseModel):
                 with open(self.path / 'data/data.bin', 'ab') as f:
                     f.write(data)
             else:
-                self._write_bytes(pnt, pnt + self.inst_len(), data)
+                self._write_bytes(pnt, pnt + self.get_table_schema().inst_len, data)
 
             self._set_tombstone_flag(pnt)
         else:
-            entry = logging.Entry('SEND', None, None, data)
+            entry = logging.Entry('SEND', None, None, data, None)
             logging(entry)
 
     @classmethod
@@ -56,13 +43,15 @@ class HighBaseModel(LowBaseModel):
         as dict_value, that contains tuple from table
         """
 
-        mask_len, length = cls.get_mask_len(), cls.inst_len()
-        attr_offset, _, attr_struct = cls._setup_attr_struct()
+        table_schema = cls.get_table_schema()
+        mask_len, length = table_schema.mask_len, table_schema.inst_len
+        attr_struct_dict = table_schema.attr_struct_dict
+        attr_offset_dict = table_schema.attr_offset_dict
 
-        if not args:
-            attributes = {attr: order for order, attr in enumerate(cls.__slots__)}
-        else:
+        if args:
             attributes = {attr: order for order, attr in enumerate(args)}
+        else:
+            attributes = table_schema.attr_ord_dict
 
         table = Table({}, **attributes)
         with ExitStack() as stack:
@@ -90,14 +79,14 @@ class HighBaseModel(LowBaseModel):
                 prefix = mv_data[glob_pnt: glob_pnt + mask_len]
                 id_list_params = []
 
-                for id_attr in cls.primary_key:
+                for id_attr in table_schema.primary_key:
                     if cls.check_none_value(prefix, id_attr):
                         raise AttributeError(
                             "key have None value, but should not have"
                         )
 
-                    id_offset = glob_pnt + mask_len + attr_offset[id_attr]
-                    id_txt = attr_struct[id_attr].unpack_from(mm_data, id_offset)[0]
+                    id_offset = glob_pnt + mask_len + attr_offset_dict[id_attr]
+                    id_txt = attr_struct_dict[id_attr].unpack_from(mm_data, id_offset)[0]
                     if isinstance(id_txt, bytes):
                         id_txt = cls.sanitize(id_txt).decode('utf-8')
                     id_list_params.append(id_txt)
@@ -105,8 +94,8 @@ class HighBaseModel(LowBaseModel):
                 list_params = RowList()
                 for attr in attributes.keys():
                     if not cls.check_none_value(prefix, attr):
-                        offset = glob_pnt + mask_len + attr_offset[attr]
-                        txt = attr_struct[attr].unpack_from(mm_data, offset)[0]
+                        offset = glob_pnt + mask_len + attr_offset_dict[attr]
+                        txt = attr_struct_dict[attr].unpack_from(mm_data, offset)[0]
                         if isinstance(txt, bytes):
                             txt = cls.sanitize(txt).decode('utf-8')
                     else:
@@ -120,16 +109,16 @@ class HighBaseModel(LowBaseModel):
     @classmethod
     def delete(cls, expr: str) -> int:
         """
-        delete in database every tuple, where condition is evaled as True.
+        delete in database every tuple, where condition is evalved as True.
         Returns number of deleted lines
         """
 
         logging = _LOG_INST.get()
         deleted_count = 0
-        mask_len, length = cls.get_mask_len(), cls.inst_len()
+        table_schema = cls.get_table_schema()
+        length = table_schema.inst_len
         ast = build_ast(expr)
-        attr_offset, attr_ctype, _ = cls._setup_attr_struct()
-        vvars = [attrib for attrib in cls.__slots__ if attrib in expr]
+        vvars = [attrib for attrib in table_schema.attributes if attrib in expr]
 
         with ExitStack() as stack:
             data_path = cls.path / 'data/data.bin'
@@ -161,8 +150,8 @@ class HighBaseModel(LowBaseModel):
 
                 for var in vvars:
                     if not cls.check_none_value(mask, var):
-                        start = glob_pnt + mask_len + attr_offset[var]
-                        val, = struct.unpack_from(attr_ctype[var], mm_data, start)
+                        start = glob_pnt + table_schema.mask_len + table_schema.attr_offset_dict[var]
+                        val, = struct.unpack_from(table_schema.attr_ctype_dict[var], mm_data, start)
 
                         vals[var] = (
                             cls.sanitize(val).decode('utf-8')
@@ -179,8 +168,8 @@ class HighBaseModel(LowBaseModel):
                         mm_tomb[segment] &= ~(1 << (7 - offset))
                     else:
                         assert mv_data is not None
-                        old_data = mv_data[glob_pnt : glob_pnt + cls.inst_len()].tobytes()
-                        entry = logging.Entry('DELETE', glob_pnt, old_data, None)
+                        old_data = mv_data[glob_pnt : glob_pnt + length].tobytes()
+                        entry = logging.Entry('DELETE', glob_pnt, old_data, None, None)
                         logging(entry)
         return deleted_count
 
@@ -193,8 +182,11 @@ class HighBaseModel(LowBaseModel):
         if logging:
             with open(cls.path / 'data/tombstone.map', 'r+b') as tomb:
                 all_flags = tomb.read()
-                entry = logging.Entry('DELETE_TABLE', None, all_flags, None)
+                table_schema_bytes = cls.get_table_schema().to_json().encode('utf-8')
+                entry = logging.Entry('DELETE_TABLE', None, all_flags, None, table_schema_bytes)
                 logging(entry)
+
+            open(cls.path / 'data/meta.json', 'w').close()
         else:
             open(cls.path / 'data/tombstone.map', 'w').close()
             open(cls.path / 'data/data.bin', 'w').close()
@@ -218,18 +210,21 @@ class HighBaseModel(LowBaseModel):
         logging = _LOG_INST.get()
         update_count = 0
         skip_check = True if expr == "True" else False
-        length = cls.inst_len()
+        table_schema = cls.get_table_schema()
+        length = table_schema.inst_len
+        attributes = table_schema.attributes
         expr_ast = build_ast(expr)
 
-        attr_offset, attr_ctype, attr_struct = cls._setup_attr_struct()
-        attr_ord = dict(zip(cls.__slots__, range(0, len(cls.__slots__))))
+        attr_struct_dict = table_schema.attr_struct_dict
+        attr_offset_dict = table_schema.attr_offset_dict
+        attr_ord = dict(zip(attributes, range(0, len(attributes))))
 
         compiled_attrs = {attr: build_ast(expr) for attr, expr in attrs.items()}
-        vvars = [attr for attr in cls.__slots__ if attr in expr]
+        vvars = [attr for attr in attributes if attr in expr]
         vvars += [
             attr
             for expr in attrs.values()
-            for attr in cls.__slots__ if attr in expr
+            for attr in attributes if attr in expr
         ]
 
         with ExitStack() as stack:
@@ -260,8 +255,8 @@ class HighBaseModel(LowBaseModel):
 
                 for var in vvars:
                     if not cls.check_none_value(mask, var):
-                        start = glob_pnt + mask_len + attr_offset[var]
-                        val, = struct.unpack_from(attr_ctype[var], mm_data, start)
+                        start = glob_pnt + mask_len + attr_offset_dict[var]
+                        val, = struct.unpack_from(table_schema.attr_ctype_dict[var], mm_data, start)
 
                         vals[var] = (
                             cls.sanitize(val).decode('utf-8') if isinstance(val, bytes)
@@ -276,11 +271,11 @@ class HighBaseModel(LowBaseModel):
                     # params for logging
                     log_mask = mv_data[glob_pnt: glob_pnt + mask_len].tobytes()
                     log_buff = bytearray(
-                        mv_data[glob_pnt + mask_len: glob_pnt + cls.inst_len()].tobytes())
+                        mv_data[glob_pnt + mask_len: glob_pnt + length].tobytes())
 
                     for attr, comp_expr in compiled_attrs.items():
                         new_val = eval_ast(expr, comp_expr, vals)
-                        start = glob_pnt + mask_len + attr_offset[attr]
+                        start = glob_pnt + mask_len + attr_offset_dict[attr]
                         is_none = cls.check_none_value(mask, attr)
 
                         if new_val is None and not is_none:
@@ -296,10 +291,10 @@ class HighBaseModel(LowBaseModel):
                                 new_val = cls.sanitize_str(new_val).encode('utf-8')
 
                             if logging is None:
-                                attr_struct[attr].pack_into(mm_data, start, new_val)
+                                attr_struct_dict[attr].pack_into(mm_data, start, new_val)
                             else:
-                                attr_struct[attr].pack_into(
-                                    log_buff, attr_offset[attr], new_val)
+                                attr_struct_dict[attr].pack_into(
+                                    log_buff, attr_offset_dict[attr], new_val)
 
                         elif new_val is not None and is_none:
                             mask = cls._flip_prefix_bit(
@@ -309,16 +304,16 @@ class HighBaseModel(LowBaseModel):
 
                             if logging is None:
                                 mv_data[glob_pnt: glob_pnt + mask_len] = mask
-                                attr_struct[attr].pack_into(mm_data, start, new_val)
+                                attr_struct_dict[attr].pack_into(mm_data, start, new_val)
                             else:
                                 log_mask = mask
-                                attr_struct[attr].pack_into(
-                                    log_buff, attr_offset[attr], new_val)
+                                attr_struct_dict[attr].pack_into(
+                                    log_buff, attr_offset_dict[attr], new_val)
 
                     if logging is not None:
-                        old_data = mv_data[glob_pnt: glob_pnt + cls.inst_len()].tobytes()
+                        old_data = mv_data[glob_pnt: glob_pnt + length].tobytes()
                         new_data = bytes(log_mask + log_buff)
-                        entry = logging.Entry('UPDATE', glob_pnt, old_data, new_data)
+                        entry = logging.Entry('UPDATE', glob_pnt, old_data, new_data, None)
                         logging(entry)
 
                     del log_mask

@@ -151,7 +151,6 @@ class Table[T = AcceptTypes](dict[tuple, RowList[T]]):
             )
         return new_table
 
-
     class _JoinUtils:
         """helper methods for join method"""
 
@@ -164,7 +163,7 @@ class Table[T = AcceptTypes](dict[tuple, RowList[T]]):
 
             return {(attr + postfix if attr in same_attrs else attr): idx
                     for attr, idx in attrs.items()}
-        
+
         def setup_build_side(self, switched: bool, typ: JoinType) -> JoinType:
             """
             changing rotation for smaller table based on equivalency of joins

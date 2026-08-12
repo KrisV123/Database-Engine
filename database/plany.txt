@@ -1,11 +1,15 @@
 DATABAZA:
 
-3, (HOTOVO) nejaka kontrola, ktora by kontrolovala, ci sedi byte_model a python premenne v atributoch
-4, mozno nieco vymysliet, co kontroluje unikatnost klucov
-5, (HOTOVO) vytvaranie byte_modelu urcite pojde nejako automatizovat (napriklad v metatreide alebo metodou)
-6, urobit vyhladavanie prveho volneho miesta pomocou binary search v kominacii s prefix sum alebo fenwick
-7, asi nieco vymysliet na foreign key
-8, urobit vynutitelny check na tabulke, ze musi byt logovatelna
+1, (HOTOVO) nejaka kontrola, ktora by kontrolovala, ci sedi byte_model a python premenne v atributoch
+2, mozno nieco vymysliet, co kontroluje unikatnost klucov
+3, (HOTOVO) vytvaranie byte_modelu urcite pojde nejako automatizovat (napriklad v metatreide alebo metodou)
+4, urobit vyhladavanie prveho volneho miesta pomocou binary search v kominacii s prefix sum alebo fenwick
+5, asi nieco vymysliet na foreign key
+6, urobit vynutitelny check na tabulke, ze musi byt logovatelna
+7, asi bude lepsie prepisat join tak, aby mal aj primary_key v riadku a nie iba v kluci slovnika.
+   Nedaju sa inac tie parametre lahko identifikovat a mozno sa aj join zjednodusi
+   (toto je asi iba pri inner join)
+7, urobit, ze rollback bude pouzivat checksum na kontrolu dat a tiez urobit tieto "read back" kontroly optional
 
 Robota:
 
@@ -13,7 +17,9 @@ Robota:
 2.  (NIKDY NEPOJDE) zariadit, aby metoda set() vracal spravny typ Table
     (aj s vnutornymi parametrami), inac to v praxi nefunguje dobre
 
-3.  Urobit meta.bin pre kazdu tabulku, kde sa budu uchovavat
+4.  z nejakeho dovodu do meta.json cestu raz uklada s velkym c a raz malym. Problem pri odlisnom spustani kodu
+
+3.  (HOTOVO) Urobit meta.bin pre kazdu tabulku, kde sa budu uchovavat
     informacie o uz vlozenych datach ako:
 
     byte_model, meno konstruktora, primary key, atd.
@@ -44,6 +50,7 @@ Momentalne data v meta.json
 
 - meno modelu
 - vsetky atributy
+- primarny kluc
 - byte_model
 - cesta k folderu s modelom
 

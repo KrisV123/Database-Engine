@@ -1,6 +1,7 @@
 #from database.tools.BaseModel import HighBaseModel, Table, RowList
 from database.tools.core.HighBaseModel import HighBaseModel
 from database.tools.core.meta import BaseModelMeta
+from database.tools.core.table_schema import TableSchema
 from database.tools.wal_comp import _LOG_INST, WAL
 from pathlib import Path
 from pprint import pprint
@@ -41,6 +42,8 @@ def test_transact(_):
 """
 
 if __name__ == '__main__':
+    #schema = TableSchema.init_meta(Test)
+    pprint(TableSchema.check_table_schema(Test, 'tests/test_database/test_model/data/meta.json'))
     """
     try:
         with WAL(Test, 'testing') as log_inst:

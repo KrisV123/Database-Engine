@@ -4,47 +4,14 @@ import struct
 import io
 from collections.abc import Generator, Callable
 from dataclasses import dataclass
+from pathlib import Path
 from typing import ClassVar, Annotated
 
 from database.tools.core.HighBaseModel import HighBaseModel
 from database.tools.core.LowBaseModel import LowBaseModel
 from database.tools.core.meta import BaseModelMeta
+from database.tools.core.table_schema import TableSchema
 from tests.test_database.test_model.test import Test
-
-class Test_get_packer:
-
-    @pytest.fixture
-    def inst(self) -> Generator[HighBaseModel, None, None]:
-        class Model(HighBaseModel, metaclass=BaseModelMeta):
-            pass
-
-        state = Model()
-        yield state
-        del state
-
-    def test_get_packer_default(self, inst: HighBaseModel):
-        assert inst._packer is None
-        inst.get_packer()
-        assert inst._packer is not None
-
-    def test_get_packer_type(self, inst: HighBaseModel):
-        resp = inst.get_packer()
-        assert isinstance(resp, struct.Struct)
-
-    def test_get_packer_equality(self, inst: HighBaseModel):
-        """firstly check if it is even equivalent"""
-
-        resp1 = inst.get_packer()
-        resp2 = inst.get_packer()
-        assert resp1 == resp2
-
-    def test_get_packer_identity(self, inst: HighBaseModel):
-        """next if it identical"""
-
-        resp1 = inst.get_packer()
-        resp2 = inst.get_packer()
-        assert resp1 is resp2
-
 
 class Test_sanitize:
 
@@ -103,6 +70,16 @@ def model_factory_default_with_params() -> Callable[
             email: Annotated[str, 40] | None = None
             phone_num: Annotated[str, 13] | None = None
 
+            path: ClassVar[Path] = Path()
+
+            _table_schema: ClassVar[TableSchema | None] = TableSchema(
+                'Model',
+                ['id', 'name', 'surname', 'birth_date', 'email', 'phone_num'],
+                ('id',),
+                '< I 20s 20s 10s 40s 13s',
+                str(path)
+            )
+
         return Model(id, name, surname, birth_date, email, phone_num)
     return _create
 
@@ -133,7 +110,18 @@ def model_factory_2byte_mask() -> Callable[
             city: Annotated[str, 20] | None = None
             postal_code: Annotated[str, 6] | None = None
 
+            path: ClassVar[Path] = Path()
             byte_model: ClassVar[str] = 'I 20s 20s 10s 40s 13s 40s 20s 6s'
+            _table_schema: ClassVar[TableSchema | None] = TableSchema(
+                'Model',
+                [
+                    'id', 'name', 'surname', 'birth_date', 'email',
+                    'phone_num', 'address', 'city', 'postal_code'
+                ],
+                ('id',),
+                byte_model,
+                str(path)
+            )
 
         return Model(id, name, surname, birth_date, email,
                      phone_num, adress, city, postal_code)
@@ -151,6 +139,13 @@ def small_class_factory() -> Callable[[], type]:
 
             path: ClassVar[io.BytesIO] = io.BytesIO( #type: ignore
                 bytes([0b00111110, 0b01111111, 0b11000000])
+            )
+            _table_schema: ClassVar[TableSchema | None] = TableSchema(
+                'Model',
+                ['id', 'name', 'surname'],
+                ('id',),
+                '< I 20s 20s',
+                str(path)
             )
 
         return Model
@@ -171,6 +166,18 @@ def model_factory_2byte_mask_without_params() -> Callable[[], type]:
             address: Annotated[str, 40] | None = None
             city: Annotated[str, 20] | None = None
             postal_code: Annotated[str, 6] | None = None
+
+            path = Path()
+            _table_schema: ClassVar[TableSchema | None] = TableSchema(
+                'Model',
+                [
+                    'id', 'name', 'surname', 'birth_date', 'email',
+                    'phone_num', 'address', 'city', 'postal_code'
+                ],
+                ('id',),
+                '< I 20s 20s 10s 40s 13s 40s 20s 6s',
+                str(path)
+            )
 
         return Model
     return _create
@@ -257,13 +264,22 @@ class Test_getstate:
         assert expect == model.getstate()
 
     @pytest.fixture
-    def model_factory_empty(self):
+    def model_factory_empty(self) -> object:
 
         class Model(HighBaseModel, metaclass=BaseModelMeta):
             byte_model = ''
+            path = Path()
 
             def __init__(self):
                 pass
+
+            _table_schema: ClassVar[TableSchema | None] = TableSchema(
+                'Model',
+                [],
+                (),
+                byte_model,
+                str(path)
+            )
 
         return Model()
 
@@ -293,7 +309,7 @@ class Test_setstate:
         )
         cls = small_class_factory()
 
-        assert len(bstream) == cls.inst_len()
+        assert len(bstream) == cls.get_table_schema().inst_len
 
         inst = cls.setstate(bstream)
 
@@ -311,7 +327,7 @@ class Test_setstate:
             + 2 * (b'\x00' * 20)
         )
 
-        assert len(bstream) == cls.inst_len()
+        assert len(bstream) == cls.get_table_schema().inst_len
 
         inst = cls.setstate(bstream)
 
@@ -343,79 +359,12 @@ class Test_setstate:
         )
 
         cls = model_factory_2byte_mask_without_params()
-        assert len(bstream) == cls.inst_len()
+        assert len(bstream) == cls.get_table_schema().inst_len
 
         inst = cls.setstate(bstream)
 
         for idx, attr in enumerate(cls.__slots__):
             assert data[idx] == getattr(inst, attr)
-
-
-class Test_get_byte_model_list:
-
-    @pytest.fixture
-    def small_class_factory(self) -> Callable[[str], type[LowBaseModel]]:
-        def _create(byte_model: str) -> type[LowBaseModel]:
-
-            class Model(HighBaseModel):
-                def __init__(self):
-                    pass
-
-            cls = Model
-            cls.byte_model = byte_model
-            return cls
-
-        return _create
-    
-    @pytest.mark.parametrize(
-        "model_str, model_list",
-        [
-            ('I 20s 20s B', ['I', '20s', '20s', 'B']),
-            ('x20s20sB', ['x', '20s', '20s', 'B']),
-            ('I20s   20sB', ['I', '20s', '20s', 'B']),
-            ('', [])
-        ],
-        ids=[
-            'default',
-            'without space',
-            'extra_space',
-            'empty'
-        ]
-    )
-    def test_get_byte_model_list(self,
-                                 model_str: str, model_list: list[str],
-                                 small_class_factory: Callable[[str], type[LowBaseModel]]):
-        cls = small_class_factory(model_str)
-        assert cls.get_byte_model_list() == model_list
-
-    @pytest.mark.parametrize(
-        "model_str, error, error_msg",
-        [
-            ('I 20s s20 B', AttributeError, 'invalid byte model'),
-            ('I 20s p B', AttributeError, 'invalid byte model'),
-            ('I20ssB', AttributeError, 'invalid byte model')
-        ]
-    )
-    def test_get_byte_model_list_errors(self,
-                                        model_str: str, error: type[Exception], error_msg: str,
-                                        small_class_factory: Callable[[str], type[LowBaseModel]]):
-        cls = small_class_factory(model_str)
-        with pytest.raises(error, match=error_msg):
-            cls.get_byte_model_list()
-
-
-class Test_get_offset:
-    
-    @pytest.mark.parametrize(
-            "val, offset", [('email', 54), ('id', 0), ('postal_code', 167)]
-    )
-    def test_get_offset(self,
-                        val: str, offset: int,
-                        model_factory_2byte_mask_without_params: Callable):
-        cls = model_factory_2byte_mask_without_params()
-        order = cls.get_offset(val)
-        assert order == offset
-
 
 class Test_flip_prefix_bit:
 
@@ -617,7 +566,7 @@ class Test_find_empty_space:
     def test_find_empty_space_all_positions(self,
                                             setup_tomb: Callable[[bytes], None],
                                             clean_tomb: Callable[[], None]):
-        inst_len = Test.inst_len()
+        inst_len = Test.get_table_schema().inst_len
         test_byte_len = 30
         for pos in range(test_byte_len * 8):
             segment, offset = pos // 8, pos % 8

@@ -1,24 +1,26 @@
 from pathlib import Path
-from database.tools.core.HighBaseModel import HighBaseModel
-from database.tools.core.meta import BaseModelMeta
-from database.tools.wal_comp import WAL
 from dataclasses import dataclass
 from typing import ClassVar, Annotated
 from pprint import pprint
+
+from database.tools.core.HighBaseModel import HighBaseModel
+from database.tools.core.meta import BaseModelMeta
+from database.tools.wal_comp import WAL
+from database.tools.core.table_schema import TableSchema
 
 @dataclass(slots=True)
 class Model(HighBaseModel, metaclass=BaseModelMeta):
 
     id: Annotated[int, "unsigned int"]
     krsne: Annotated[str, 20]
-    priezvysko: Annotated[str, '20p'] | None
+    priezvysko: Annotated[str, 20] | None
     dat_nar: Annotated[str, 20] | None
-    vyska: Annotated[float, 'float'] | None
+    vyska: Annotated[float, "float"] | None
     ma_vodicak: bool | None
     neviem: Annotated[int, "unsigned int"] | None
 
     # key or superkey
-    primary_key: ClassVar[tuple[str]] = ('id',)
+    primary_key: ClassVar[tuple[str, ...]] = ('id',)
     #byte_model: ClassVar[str] = '< I 20s 20s 20s f ? I'
     path: ClassVar[Path] = Path(__file__).parent
 
@@ -62,7 +64,7 @@ def combined_tracked_transaction() -> None:
 
         Model.delete_table()
 
-        Model(5, 'Jozko', 'Mrkvicka', '69.7.2000', 110.2, False, 1).send()
+        #Model(5, 'Jozko', 'Mrkvicka', '69.7.2000', 110.2, False, 1).send()
 
 def untracked_update() -> None:
     Model.update('id < 100', krsne="'Adam'")
@@ -74,6 +76,10 @@ def tracked_delete_table() -> None:
     pprint(Model.set())
 
 if __name__ == '__main__':
+
+    #table_schema = Model.get_table_schema()
+    #pprint(table_schema)
+
     #print(Model.get_byte_model_list())
     #print(Model.get_endianness_symbol())
 
@@ -90,8 +96,28 @@ if __name__ == '__main__':
     Model.delete_table()
     """
 
-    print(Model.byte_model)
+    #Model.delete_table()
+    """
+    Model.delete_table()
+    setup_table()
+    combined_tracked_transaction()
+    pprint(Model.set())
+    """
 
+    #WAL.rollback(Model, 'database/person_model/data/wal_logs/testing_26-08-12_19-20-179990.log')
+    #pprint(Model.set())
+
+    """
+    Model.delete_table()
+    setup_table()
+    pprint(Model.set())
+    print()
+    combined_tracked_transaction()
+    pprint(Model.set())
+    print()
+    """
+
+    """
     Model.delete_table()
 
     setup_table()
@@ -103,6 +129,7 @@ if __name__ == '__main__':
     pprint(Model.set())
 
     Model.delete_table()
+    """
 
     #setup_table()
     #combined_tracked_transaction()

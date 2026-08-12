@@ -40,7 +40,7 @@ class Test_send:
         with open(Test.path / 'data/data.bin', 'rb') as f:
             db_bytes = f.read()
 
-        inst_len = Test.inst_len()
+        inst_len = Test.get_table_schema().inst_len
         instances = [
             Test.setstate(db_bytes[i:i + inst_len])
             for i in range(0, len(db_bytes), inst_len)
@@ -74,7 +74,7 @@ class Test_send:
         with open(Test.path / 'data/data.bin', 'r+b') as f:
             db_bytes = f.read()
 
-        inst_len = Test.inst_len()
+        inst_len = Test.get_table_schema().inst_len
         instances = [
             Test.setstate(db_bytes[i:i + inst_len])
             for i in range(0, len(db_bytes), inst_len)

@@ -1,5 +1,6 @@
 from typing import Any, Union, ClassVar, get_args, get_origin, get_type_hints, assert_never
 from types import UnionType, NoneType
+from pathlib import Path
 
 from database.tools.core.types import T_AcceptType, C_TYPES_TO_STRUCT
 
@@ -102,9 +103,6 @@ class Typing_helper:
 class BaseModelMeta(type):
 
     def __new__(cls, name: str, bases: tuple[type], namespace: dict[str, Any]):
-        if '_packer' not in namespace.keys():
-            namespace['_packer'] = None
-
         byte_model = namespace.get('byte_model')
 
         if '__annotations__' in namespace and byte_model is None:

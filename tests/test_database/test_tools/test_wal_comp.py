@@ -8,6 +8,7 @@ import os
 import pytest #type:ignore[import-not-found]
 import shutil
 
+import json
 from io import BufferedRandom
 from contextvars import Token
 from collections.abc import Generator, Callable
@@ -235,11 +236,17 @@ class Test_WAL:
                 b'\x00\x00\x00\x00'
             )
 
+        @pytest.fixture
+        def get_test_model_meta_bytes(self) -> bytes:
+            with open(Test.path / 'data/meta.json', 'r') as f:
+                data = json.load(f)
+            return json.dumps(data).encode('utf-8')
+
         def test_handle_operator_send_sanity_full_before(
                                             self,
                                             db_one_usage: Test_WAL.Db_one_use_yield,
                                             new_bytes_data: bytes):
-            entry = WAL.Entry('SEND', None, None, new_bytes_data)
+            entry = WAL.Entry('SEND', None, None, new_bytes_data, None)
             with WAL(Test, 'log_specially_made_for_testing') as log_inst:
                 log_inst._handle_operator(entry)
                 assert entry.old_data is None
@@ -253,7 +260,7 @@ class Test_WAL:
                                             db_one_usage: Test_WAL.Db_one_use_yield,
                                             new_bytes_data: bytes):
             Test.delete('id == 5')
-            entry = WAL.Entry('SEND', None, None, new_bytes_data)
+            entry = WAL.Entry('SEND', None, None, new_bytes_data, None)
             with WAL(Test, 'log_specially_made_for_testing') as log_inst:
                 log_inst._handle_operator(entry)
                 assert entry.old_data is not None
@@ -266,7 +273,7 @@ class Test_WAL:
                                             db_one_usage: Test_WAL.Db_one_use_yield,
                                             new_bytes_data: bytes):
             Test.delete("id == 5 or id == 6")
-            entry = WAL.Entry('SEND', None, None, new_bytes_data)
+            entry = WAL.Entry('SEND', None, None, new_bytes_data, None)
             with WAL(Test, 'log_specially_made_for_testing') as log_inst:
                 log_inst._handle_operator(entry)
                 assert entry.old_data is not None
@@ -277,7 +284,7 @@ class Test_WAL:
         def test_handle_operator_delete_full(self, db_one_usage: Test_WAL.Db_one_use_yield):
             table = Test.set()
             bytes_model = Test.from_row(table[(4,)]).getstate()
-            entry = WAL.Entry('DELETE', 540, bytes_model, None)
+            entry = WAL.Entry('DELETE', 540, bytes_model, None, None)
             with WAL(Test, 'log_specially_made_for_testing') as log_inst:
                 assert log_inst.db_full == True
                 assert log_inst.empty_space_pnt == 1188
@@ -289,7 +296,7 @@ class Test_WAL:
             Test.delete("id == 3")
             table = Test.set()
             bytes_model = Test.from_row(table[(4,)]).getstate()
-            entry = WAL.Entry('DELETE', 540, bytes_model, None)
+            entry = WAL.Entry('DELETE', 540, bytes_model, None, None)
             with WAL(Test, 'log_specially_made_for_testing') as log_inst:
                 assert log_inst.db_full == False
                 assert log_inst.empty_space_pnt == 324
@@ -301,7 +308,7 @@ class Test_WAL:
             Test.delete("id == 8")
             table = Test.set()
             bytes_model = Test.from_row(table[(4,)]).getstate()
-            entry = WAL.Entry('DELETE', 540, bytes_model, None)
+            entry = WAL.Entry('DELETE', 540, bytes_model, None, None)
             with WAL(Test, 'log_specially_made_for_testing') as log_inst:
                 assert log_inst.db_full == False
                 assert log_inst.empty_space_pnt == 864
@@ -309,9 +316,12 @@ class Test_WAL:
                 assert log_inst.db_full == False
                 assert log_inst.empty_space_pnt == 540
 
-        def test_handle_operator_delete_table_sanity(self, db_one_usage: Test_WAL.Db_one_use_yield):
+        def test_handle_operator_delete_table_sanity(self,
+                                                     db_one_usage: Test_WAL.Db_one_use_yield,
+                                                     get_test_model_meta_bytes: bytes
+                                                    ):
 
-            entry = WAL.Entry('DELETE_TABLE', None, b'\00', None)
+            entry = WAL.Entry('DELETE_TABLE', None, b'\00', None, get_test_model_meta_bytes)
             with WAL(Test, 'log_specially_made_for_testing') as log_inst:
                 assert log_inst.db_full == True
                 assert log_inst.empty_space_pnt != 0
@@ -319,8 +329,8 @@ class Test_WAL:
                 assert log_inst.db_full == False
                 assert log_inst.empty_space_pnt == 0
 
-        def test_handle_operator_delete_table_empty(self):
-            entry = WAL.Entry('DELETE_TABLE', None, b'\00', None)
+        def test_handle_operator_delete_table_empty(self, get_test_model_meta_bytes: bytes):
+            entry = WAL.Entry('DELETE_TABLE', None, b'\00', None, get_test_model_meta_bytes)
             with WAL(Test, 'log_specially_made_for_testing') as log_inst:
                 assert log_inst.db_full == True
                 assert log_inst.empty_space_pnt == 0
@@ -338,55 +348,65 @@ class Test_WAL:
 
         test_inputs: list[tuple[WAL.Entry, bytes]] = [
             (
-                WAL.Entry('SEND', 200, None, model_1),
+                WAL.Entry('SEND', 200, None, model_1, None),
                 b''.join((
                     b'\x01',
                     b'\x00', b'',
+                    b'\x00', b'',
                     b'\x01', model_1,
+                    b'',
                     b'',
                     crc32(model_1).to_bytes(4, 'little', signed=False),
                     b'\xc8\x01',
                     b'\x00'
                 ))
             ),(
-                WAL.Entry('SEND', 256, None, model_1),
+                WAL.Entry('SEND', 256, None, model_1, None),
                 b''.join((
                     b'\x01',
                     b'\x00', b'',
+                    b'\x00', b'',
                     b'\x01', model_1,
+                    b'',
                     b'',
                     crc32(model_1).to_bytes(4, 'little', signed=False),
                     b'\x80\x02',
                     b'\x00'
                 ))
             ),(
-                WAL.Entry('UPDATE', 69, model_2, model_1),
+                WAL.Entry('UPDATE', 69, model_2, model_1, None),
                 b''.join((
                     b'\x02',
+                    b'\x00', b'',
                     b'\x01', model_2,
                     b'\x01', model_1,
+                    b'',
                     crc32(model_2).to_bytes(4, 'little', signed=False),
                     crc32(model_1).to_bytes(4, 'little', signed=False),
                     b'E',
                     b'\x00'
                 ))
             ),(
-                WAL.Entry('DELETE', 67, model_2, None),
+                WAL.Entry('DELETE', 67, model_2, None, None),
                 b''.join((
                     b'\x03',
+                    b'\x00', b'',
                     b'\x01', model_2,
                     b'\x00', b'',
+                    b'',
                     crc32(model_2).to_bytes(4, 'little', signed=False),
                     b'',
                     b'C',
                     b'\x00'
                 ))
             ),(
-                WAL.Entry('DELETE_TABLE', 0, fake_tombstone, None),
+                WAL.Entry('DELETE_TABLE', 0, fake_tombstone, None, expect_logs.encode_table_schema),
                 b''.join((
                     b'\x04',
+                    b'\x01', VarInt.to_varint(len(expect_logs.encode_table_schema)) + expect_logs.encode_table_schema,
                     b'\x01', VarInt.to_varint(len(fake_tombstone)) + fake_tombstone,
                     b'\x00', b'',
+                    crc32(VarInt.to_varint(len(expect_logs.encode_table_schema)) + expect_logs.encode_table_schema).to_bytes(4, 'little', signed=False),
                     crc32(VarInt.to_varint(len(fake_tombstone)) + fake_tombstone).to_bytes(4, 'little', signed=False),
                     b'',
                     b'\x00'
@@ -396,15 +416,15 @@ class Test_WAL:
         ]
 
         @pytest.mark.parametrize(
-                "entry, log",
-                test_inputs,
-                ids=[
-                    'send_sanity',
-                    'test_two_byte_idx',
-                    'sanity_update',
-                    'sanity_delete',
-                    'sanity_delete_table'
-                ]
+            "entry, log",
+            test_inputs,
+            ids=[
+                'send_sanity',
+                'test_two_byte_idx',
+                'sanity_update',
+                'sanity_delete',
+                'sanity_delete_table'
+            ]
         )
         def test_create_log(self, entry: WAL.Entry, log: bytes):
             log_inst = WAL(Test, 'log_specially_made_for_testing')
@@ -414,8 +434,8 @@ class Test_WAL:
 
         def test_create_log_wrong_operator(self):
             log_inst = WAL(Test, 'log_specially_made_for_testing')
-            model = Test(1, 'Jozko', 'Mrkvicka', None, None, None).getstate()
-            entry = WAL.Entry('SIXSEVEN', 200, None, model) #type: ignore
+            model = Test(1, 'Jozko', 'Mrkvicka', None, None).getstate()
+            entry = WAL.Entry('SIXSEVEN', 200, None, model, None) #type: ignore
             with pytest.raises(TypeError,
                                match="operation or value for operator does not exist"):
                 log_inst.create_log(entry)
@@ -423,7 +443,7 @@ class Test_WAL:
         def test_create_log_missing_pointer(self):
             log_inst = WAL(Test, 'log_specially_made_for_testing')
             model = Test(1, 'Jozko', 'Mrkvicka', None, None, None).getstate()
-            entry = WAL.Entry('SEND', None, None, model)
+            entry = WAL.Entry('SEND', None, None, model, None)
             with pytest.raises(AssertionError):
                 log_inst.create_log(entry)
 

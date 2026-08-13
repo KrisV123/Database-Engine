@@ -1,12 +1,15 @@
 from __future__ import annotations
 
 import struct
+from platform import system
 from dataclasses import dataclass, field
 from json import load, dump, loads, dumps
 from pathlib import Path
 from math import ceil
 from typing import Any
 from textwrap import dedent
+
+OS = system()
 
 def get_byte_model_list(byte_model: str) -> list[str]:
     """return list of every C type from byte_model in list"""
@@ -115,6 +118,15 @@ class TableSchema:
         object.__setattr__(self, name, value)
 
     @classmethod
+    def normalize_path(cls, path: str | Path):
+        new_path = str(path) if isinstance(path, Path) else path
+
+        if OS == 'Windows':
+            new_path = new_path.lower()
+
+        return new_path
+
+    @classmethod
     def init_meta(cls, model: type) -> TableSchema:
         """creates new meta.json in model's data"""
 
@@ -123,7 +135,7 @@ class TableSchema:
             'attributes': [name for name in model.__slots__],
             'primary_key': model.primary_key,
             'byte_model': model.byte_model,
-            'model_path': str(model.path)
+            'model_path': cls.normalize_path(model.path)
         }
         with open(model.path / 'data/meta.json', 'w') as f:
             dump(meta, f, indent=4)
@@ -135,9 +147,10 @@ class TableSchema:
         """creates model's TableSchema, witch is memory cache of meta.json"""
 
         with open(meta_path, 'r') as f:
-            meta = load(f)
+            meta: dict = load(f)
 
-        assert isinstance(meta, dict)
+        meta['model_path'] = cls.normalize_path(meta['model_path'])
+
         return TableSchema(**meta)
 
     @classmethod
@@ -185,7 +198,7 @@ class TableSchema:
                 """
             ))
 
-        if str(model.path) != table_schema.model_path:
+        if cls.normalize_path(model.path) != table_schema.model_path:
             raise TableSchemaError(dedent(
                 f"""
                 Model's path don't match with model's path in TableSchema
@@ -202,6 +215,6 @@ class TableSchema:
             'attributes': self.attributes,
             'primary_key': self.primary_key,
             'byte_model': self.byte_model,
-            'model_path': self.model_path
+            'model_path': self.normalize_path(self.model_path)
         }
         return dumps(data)

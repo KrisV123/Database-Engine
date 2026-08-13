@@ -17,7 +17,7 @@ Robota:
 2.  (NIKDY NEPOJDE) zariadit, aby metoda set() vracal spravny typ Table
     (aj s vnutornymi parametrami), inac to v praxi nefunguje dobre
 
-4.  z nejakeho dovodu do meta.json cestu raz uklada s velkym c a raz malym. Problem pri odlisnom spustani kodu
+4.  (HOTOVO) z nejakeho dovodu do meta.json cestu raz uklada s velkym c a raz malym. Problem pri odlisnom spustani kodu
 
 3.  (HOTOVO) Urobit meta.bin pre kazdu tabulku, kde sa budu uchovavat
     informacie o uz vlozenych datach ako:
@@ -27,7 +27,7 @@ Robota:
     aby sa zachovala konzistencia, ked sa nieco zmeni a nechtiec sa necoruptli data.
 
 
-Model pre meta.json
+Model pre meta.json (HOTOVO)
 
 - meta bude source of truth
 - pri pri inicializovani tabulky sa prvykrat vytvori, ked uz bde existovat, tak bude sluzit na overovanie

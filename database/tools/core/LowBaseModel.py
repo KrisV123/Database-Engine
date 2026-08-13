@@ -37,7 +37,10 @@ class LowBaseModel:
 
         if cls._table_schema is None:
             meta_exists = (cls.path / 'data/meta.json').exists()
-            meta_size = (cls.path / 'data/meta.json').stat().st_size
+            try:
+                meta_size = (cls.path / 'data/meta.json').stat().st_size
+            except:
+                meta_size = 0
             if meta_exists and meta_size == 0:
                 cls._table_schema = TableSchema.init_meta(cls)
             elif meta_exists:

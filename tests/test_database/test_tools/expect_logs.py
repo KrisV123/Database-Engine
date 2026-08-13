@@ -19,7 +19,7 @@ table_schema = {
         "id"
     ],
     "byte_model": "< l 20s 20s 10s 40s 13s",
-    "model_path": "c:\\Users\\krikr\\Desktop\\Python\\database_engine\\tests\\test_database\\test_model"
+    "model_path": "c:\\users\\krikr\\desktop\\python\\database_engine\\tests\\test_database\\test_model"
 }
 encode_table_schema = json.dumps(table_schema).encode('utf-8')
 

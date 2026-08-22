@@ -1,5 +1,5 @@
 import pytest #type:ignore[import-not-found]
-from database.tools.varint import VarInt
+from database.varint import VarInt
 
 class Test_VarInt:
     test_tuples: list[tuple[int, bytes]] = [

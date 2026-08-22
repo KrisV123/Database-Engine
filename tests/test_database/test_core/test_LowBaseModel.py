@@ -1,16 +1,15 @@
 from __future__ import annotations
 import pytest #type:ignore[import-not-found]
 import struct
-import io
 from collections.abc import Generator, Callable
 from dataclasses import dataclass
 from pathlib import Path
 from typing import ClassVar, Annotated
 
-from database.tools.core.HighBaseModel import HighBaseModel
-from database.tools.core.LowBaseModel import LowBaseModel
-from database.tools.core.meta import BaseModelMeta
-from database.tools.core.table_schema import TableSchema
+from database.core.HighBaseModel import HighBaseModel
+from database.core.LowBaseModel import LowBaseModel
+from database.core.meta import BaseModelMeta
+from database.core.table_schema import TableSchema
 from tests.test_database.test_model.test import Test
 
 class Test_sanitize:
@@ -73,11 +72,11 @@ def model_factory_default_with_params() -> Callable[
             path: ClassVar[Path] = Path()
 
             _table_schema: ClassVar[TableSchema | None] = TableSchema(
+                path,
                 'Model',
                 ['id', 'name', 'surname', 'birth_date', 'email', 'phone_num'],
                 ('id',),
-                '< I 20s 20s 10s 40s 13s',
-                str(path)
+                '< I 20s 20s 10s 40s 13s'
             )
 
         return Model(id, name, surname, birth_date, email, phone_num)
@@ -113,14 +112,14 @@ def model_factory_2byte_mask() -> Callable[
             path: ClassVar[Path] = Path()
             byte_model: ClassVar[str] = 'I 20s 20s 10s 40s 13s 40s 20s 6s'
             _table_schema: ClassVar[TableSchema | None] = TableSchema(
+                path,
                 'Model',
                 [
                     'id', 'name', 'surname', 'birth_date', 'email',
                     'phone_num', 'address', 'city', 'postal_code'
                 ],
                 ('id',),
-                byte_model,
-                str(path)
+                byte_model
             )
 
         return Model(id, name, surname, birth_date, email,
@@ -137,15 +136,13 @@ def small_class_factory() -> Callable[[], type]:
             name: Annotated[str, 20] | None
             surname: Annotated[str, 20]
 
-            path: ClassVar[io.BytesIO] = io.BytesIO( #type: ignore
-                bytes([0b00111110, 0b01111111, 0b11000000])
-            )
+            path = Path()
             _table_schema: ClassVar[TableSchema | None] = TableSchema(
+                path,
                 'Model',
                 ['id', 'name', 'surname'],
                 ('id',),
-                '< I 20s 20s',
-                str(path)
+                '< I 20s 20s'
             )
 
         return Model
@@ -169,14 +166,14 @@ def model_factory_2byte_mask_without_params() -> Callable[[], type]:
 
             path = Path()
             _table_schema: ClassVar[TableSchema | None] = TableSchema(
+                path,
                 'Model',
                 [
                     'id', 'name', 'surname', 'birth_date', 'email',
                     'phone_num', 'address', 'city', 'postal_code'
                 ],
                 ('id',),
-                '< I 20s 20s 10s 40s 13s 40s 20s 6s',
-                str(path)
+                '< I 20s 20s 10s 40s 13s 40s 20s 6s'
             )
 
         return Model
@@ -274,11 +271,11 @@ class Test_getstate:
                 pass
 
             _table_schema: ClassVar[TableSchema | None] = TableSchema(
+                path,
                 'Model',
                 [],
                 (),
-                byte_model,
-                str(path)
+                byte_model
             )
 
         return Model()
@@ -404,13 +401,13 @@ class Test_is_deleted_flag:
     def test_is_deleted_not_exist(self, small_class_factory: Callable):
         cls = small_class_factory()
         with pytest.raises(IndexError,
-                            match='Pointer check_deleted_flag out of range'):
+                           match='Pointer check_deleted_flag out of range'):
             cls.is_deleted_flag(1080, self.fake_bytes)
 
     def test_is_deleted_wrong_offser(self, small_class_factory: Callable):
         cls = small_class_factory()
         with pytest.raises(IndexError,
-                            match='Pointer not on start of instance'):
+                           match='Pointer not on start of instance'):
             cls.is_deleted_flag(257, self.fake_bytes)
 
 

@@ -2,8 +2,10 @@
 
 import json
 from zlib import crc32
-from database.tools.wal_comp import WAL
-from database.tools.varint import VarInt
+from database.wal.wal import WAL
+from database.varint import VarInt
+from database.wal.wal_types import Operator
+from database.wal.log_codec import Log_data
 
 table_schema = {
     "model_name": "Test",
@@ -18,14 +20,13 @@ table_schema = {
     "primary_key": [
         "id"
     ],
-    "byte_model": "< l 20s 20s 10s 40s 13s",
-    "model_path": "c:\\users\\krikr\\desktop\\python\\database_engine\\tests\\test_database\\test_model"
+    "byte_model": "< l 20s 20s 10s 40s 13s"
 }
 encode_table_schema = json.dumps(table_schema).encode('utf-8')
 
 expect_send_log = [
-    WAL.Log_data(
-        operator='SEND',
+    Log_data(
+        operator=Operator.SEND,
         meta_exist=False,
         meta=None,
         old_data_exist=False,
@@ -40,8 +41,8 @@ expect_send_log = [
         applied=True,
         log_length=118
     ),
-    WAL.Log_data(
-        operator='SEND',
+    Log_data(
+        operator=Operator.SEND,
         meta_exist=False,
         meta=None,
         old_data_exist=False,
@@ -56,8 +57,8 @@ expect_send_log = [
         applied=True,
         log_length=118
     ),
-    WAL.Log_data(
-        operator='SEND',
+    Log_data(
+        operator=Operator.SEND,
         meta_exist=False,
         meta=None,
         old_data_exist=False,
@@ -72,8 +73,8 @@ expect_send_log = [
         applied=True,
         log_length=119
     ),
-    WAL.Log_data(
-        operator='SEND',
+    Log_data(
+        operator=Operator.SEND,
         meta_exist=False,
         meta=None,
         old_data_exist=False,
@@ -88,8 +89,8 @@ expect_send_log = [
         applied=True,
         log_length=119
     ),
-    WAL.Log_data(
-        operator='SEND',
+    Log_data(
+        operator=Operator.SEND,
         meta_exist=False,
         meta=None,
         old_data_exist=False,
@@ -104,8 +105,8 @@ expect_send_log = [
         applied=True,
         log_length=119
     ),
-    WAL.Log_data(
-        operator='SEND',
+    Log_data(
+        operator=Operator.SEND,
         meta_exist=False,
         meta=None,
         old_data_exist=False,
@@ -120,8 +121,8 @@ expect_send_log = [
         applied=True,
         log_length=119
     ),
-    WAL.Log_data(
-        operator='SEND',
+    Log_data(
+        operator=Operator.SEND,
         meta_exist=False,
         meta=None,
         old_data_exist=False,
@@ -136,8 +137,8 @@ expect_send_log = [
         applied=True,
         log_length=119
     ),
-    WAL.Log_data(
-        operator='SEND',
+    Log_data(
+        operator=Operator.SEND,
         meta_exist=False,
         meta=None,
         old_data_exist=False,
@@ -152,8 +153,8 @@ expect_send_log = [
         applied=True,
         log_length=119
     ),
-    WAL.Log_data(
-        operator='SEND',
+    Log_data(
+        operator=Operator.SEND,
         meta_exist=False,
         meta=None,
         old_data_exist=False,
@@ -168,8 +169,8 @@ expect_send_log = [
         applied=True,
         log_length=119
     ),
-    WAL.Log_data(
-        operator='SEND',
+    Log_data(
+        operator=Operator.SEND,
         meta_exist=False,
         meta=None,
         old_data_exist=False,
@@ -184,8 +185,8 @@ expect_send_log = [
         applied=True,
         log_length=119
     ),
-    WAL.Log_data(
-        operator='SEND',
+    Log_data(
+        operator=Operator.SEND,
         meta_exist=False,
         meta=None,
         old_data_exist=False,
@@ -203,8 +204,8 @@ expect_send_log = [
 ]
 
 expect_update_log = [
-    WAL.Log_data(
-        operator='UPDATE',
+    Log_data(
+        operator=Operator.UPDATE,
         meta_exist=False,
         meta=None,
         old_data_exist=True,
@@ -220,8 +221,8 @@ expect_update_log = [
         log_length=230
     ),
 
-    WAL.Log_data(
-        operator='UPDATE',
+    Log_data(
+        operator=Operator.UPDATE,
         meta_exist=False,
         meta=None,
         old_data_exist=True,
@@ -237,8 +238,8 @@ expect_update_log = [
         log_length=230
     ),
 
-    WAL.Log_data(
-        operator='UPDATE',
+    Log_data(
+        operator=Operator.UPDATE,
         meta_exist=False,
         meta=None,
         old_data_exist=True,
@@ -254,8 +255,8 @@ expect_update_log = [
         log_length=231
     ),
 
-    WAL.Log_data(
-        operator='UPDATE',
+    Log_data(
+        operator=Operator.UPDATE,
         meta_exist=False,
         meta=None,
         old_data_exist=True,
@@ -271,8 +272,8 @@ expect_update_log = [
         log_length=231
     ),
 
-    WAL.Log_data(
-        operator='UPDATE',
+    Log_data(
+        operator=Operator.UPDATE,
         meta_exist=False,
         meta=None,
         old_data_exist=True,
@@ -291,8 +292,8 @@ expect_update_log = [
 
 
 expect_delete_log = [
-    WAL.Log_data(
-        operator='DELETE',
+    Log_data(
+        operator=Operator.DELETE,
         meta_exist=False,
         meta=None,
         old_data_exist=True,
@@ -307,8 +308,8 @@ expect_delete_log = [
         applied=True,
         log_length=118
     ),
-    WAL.Log_data(
-        operator='DELETE',
+    Log_data(
+        operator=Operator.DELETE,
         meta_exist=False,
         meta=None,
         old_data_exist=True,
@@ -323,8 +324,8 @@ expect_delete_log = [
         applied=True,
         log_length=119
     ),
-    WAL.Log_data(
-        operator='DELETE',
+    Log_data(
+        operator=Operator.DELETE,
         meta_exist=False,
         meta=None,
         old_data_exist=True,
@@ -339,8 +340,8 @@ expect_delete_log = [
         applied=True,
         log_length=119
     ),
-    WAL.Log_data(
-        operator='DELETE',
+    Log_data(
+        operator=Operator.DELETE,
         meta_exist=False,
         meta=None,
         old_data_exist=True,
@@ -355,8 +356,8 @@ expect_delete_log = [
         applied=True,
         log_length=119
     ),
-    WAL.Log_data(
-        operator='DELETE',
+    Log_data(
+        operator=Operator.DELETE,
         meta_exist=False,
         meta=None,
         old_data_exist=True,
@@ -371,8 +372,8 @@ expect_delete_log = [
         applied=True,
         log_length=119
     ),
-    WAL.Log_data(
-        operator='DELETE',
+    Log_data(
+        operator=Operator.DELETE,
         meta_exist=False,
         meta=None,
         old_data_exist=True,
@@ -390,8 +391,8 @@ expect_delete_log = [
 ]
 
 expect_delete_table_log = [
-    WAL.Log_data(
-        operator='DELETE_TABLE',
+    Log_data(
+        operator=Operator.DELETE_TABLE,
         meta_exist=True,
         meta=encode_table_schema,
         old_data_exist=True,
@@ -404,6 +405,6 @@ expect_delete_table_log = [
         db_pointer=0,
         log_pnt=100,
         applied=True,
-        log_length=284
+        log_length=182
     )
 ]

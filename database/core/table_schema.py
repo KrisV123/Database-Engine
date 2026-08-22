@@ -1,15 +1,12 @@
 from __future__ import annotations
 
 import struct
-from platform import system
 from dataclasses import dataclass, field
-from json import load, dump, loads, dumps
+from json import load, dump, dumps
 from pathlib import Path
 from math import ceil
 from typing import Any
 from textwrap import dedent
-
-OS = system()
 
 def get_byte_model_list(byte_model: str) -> list[str]:
     """return list of every C type from byte_model in list"""
@@ -80,11 +77,15 @@ class TableSchema:
     Also cache some derived metadata.
     """
 
+    path: Path # derived data from upper layer of source of truth
+
     model_name: str
     attributes: list[str]
     primary_key: tuple[str, ...]
     byte_model: str
-    model_path: str
+    #model_path: str
+
+    # derived data
 
     byte_model_list: list[str] = field(init=False)
     mask_len: int = field(init=False)
@@ -97,6 +98,9 @@ class TableSchema:
     attr_struct_dict: dict[str, struct.Struct] = field(init=False)
 
     packer: struct.Struct = field(init=False)
+
+    data_path: Path = field(init=False)
+    tomb_path: Path = field(init=False)
 
     def __post_init__(self):
         self.byte_model_list = get_byte_model_list(self.byte_model)
@@ -111,20 +115,14 @@ class TableSchema:
 
         self.packer = struct.Struct(self.byte_model)
 
+        self.data_path = self.path / 'data/data.bin'
+        self.tomb_path = self.path / 'data/tombstone.map'
+
 
     def __setattr__(self, name: Any, value: Any) -> None:
         if hasattr(self, name):
             raise TableSchemaError('TableSchema is frozen')
         object.__setattr__(self, name, value)
-
-    @classmethod
-    def normalize_path(cls, path: str | Path):
-        new_path = str(path) if isinstance(path, Path) else path
-
-        if OS == 'Windows':
-            new_path = new_path.lower()
-
-        return new_path
 
     @classmethod
     def init_meta(cls, model: type) -> TableSchema:
@@ -135,31 +133,28 @@ class TableSchema:
             'attributes': [name for name in model.__slots__],
             'primary_key': model.primary_key,
             'byte_model': model.byte_model,
-            'model_path': cls.normalize_path(model.path)
         }
         with open(model.path / 'data/meta.json', 'w') as f:
             dump(meta, f, indent=4)
 
-        return TableSchema(**meta)
+        return TableSchema(model.path, **meta)
 
     @classmethod
-    def create_table_schema_from_file(cls, meta_path: str | Path) -> TableSchema:
+    def create_table_schema_from_file(cls, model_path: Path) -> TableSchema:
         """creates model's TableSchema, witch is memory cache of meta.json"""
 
-        with open(meta_path, 'r') as f:
+        with open(model_path / 'data/meta.json', 'r') as f:
             meta: dict = load(f)
 
-        meta['model_path'] = cls.normalize_path(meta['model_path'])
-
-        return TableSchema(**meta)
+        return TableSchema(model_path, **meta)
 
     @classmethod
     def check_table_schema(cls,
                            model: type,
-                           meta_path: str | Path) -> TableSchema:
+                           model_path: Path) -> TableSchema:
         """check, if current model's metadata match with model's meta.json"""
 
-        table_schema = cls.create_table_schema_from_file(meta_path)
+        table_schema = cls.create_table_schema_from_file(model_path)
 
         if model.__name__ != table_schema.model_name:
             raise TableSchemaError(dedent(
@@ -198,15 +193,6 @@ class TableSchema:
                 """
             ))
 
-        if cls.normalize_path(model.path) != table_schema.model_path:
-            raise TableSchemaError(dedent(
-                f"""
-                Model's path don't match with model's path in TableSchema
-                meta path:  {table_schema.model_path}
-                setup path: {model.path}
-                """
-            ))
-
         return table_schema
 
     def to_json(self) -> str:
@@ -214,7 +200,6 @@ class TableSchema:
             'model_name': self.model_name,
             'attributes': self.attributes,
             'primary_key': self.primary_key,
-            'byte_model': self.byte_model,
-            'model_path': self.normalize_path(self.model_path)
+            'byte_model': self.byte_model
         }
         return dumps(data)

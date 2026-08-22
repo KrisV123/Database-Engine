@@ -1,18 +1,24 @@
 DATABAZA:
 
-1, (HOTOVO) nejaka kontrola, ktora by kontrolovala, ci sedi byte_model a python premenne v atributoch
-2, mozno nieco vymysliet, co kontroluje unikatnost klucov
-3, (HOTOVO) vytvaranie byte_modelu urcite pojde nejako automatizovat (napriklad v metatreide alebo metodou)
-4, urobit vyhladavanie prveho volneho miesta pomocou binary search v kominacii s prefix sum alebo fenwick
-5, asi nieco vymysliet na foreign key
-6, urobit vynutitelny check na tabulke, ze musi byt logovatelna
-7, asi bude lepsie prepisat join tak, aby mal aj primary_key v riadku a nie iba v kluci slovnika.
-   Nedaju sa inac tie parametre lahko identifikovat a mozno sa aj join zjednodusi
-   (toto je asi iba pri inner join)
-7, urobit, ze rollback bude pouzivat checksum na kontrolu dat a tiez urobit tieto "read back" kontroly optional
+1,  (HOTOVO) nejaka kontrola, ktora by kontrolovala, ci sedi byte_model a python premenne v atributoch
+2,  mozno nieco vymysliet, co kontroluje unikatnost klucov
+3,  (HOTOVO) vytvaranie byte_modelu urcite pojde nejako automatizovat (napriklad v metatreide alebo metodou)
+4,  urobit vyhladavanie prveho volneho miesta pomocou binary search v kominacii s prefix sum alebo fenwick
+5,  asi nieco vymysliet na foreign key
+6,  urobit vynutitelny check na tabulke, ze musi byt logovatelna
+7,  asi bude lepsie prepisat join tak, aby mal aj primary_key v riadku a nie iba v kluci slovnika.
+    Nedaju sa inac tie parametre lahko identifikovat a mozno sa aj join zjednodusi
+    (toto je asi iba pri inner join)
+7,  (HOTOVO) urobit, ze rollback bude pouzivat checksum na kontrolu dat a tiez urobit tieto "read back" kontroly optional
+8,  upratat cely WAL, neda sa tak v nom programovat,
+    (ASI ROBENE KTOVI ODLISNYM SPOSOBOM OTVORENIA) vela duplicity ASI niekedy otvara log_f, ked uz je otvoreny a uz df mam
+    (mozno kvoli tomu leakuje fd)
+9,  (HOTOVO) musim urobit aby v rollback delete_table zakomentovany truncate fungoval.
+10, Ked vypnem durability, tak nastanu errory
 
 Robota:
 
+0.  napisat testy pre TableSchema
 1.  napisat test na unreadable_log parameter a iter_logs(corrupt=True)
 2.  (NIKDY NEPOJDE) zariadit, aby metoda set() vracal spravny typ Table
     (aj s vnutornymi parametrami), inac to v praxi nefunguje dobre

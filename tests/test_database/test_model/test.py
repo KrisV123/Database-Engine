@@ -1,8 +1,8 @@
 #from database.tools.BaseModel import HighBaseModel, Table, RowList
-from database.tools.core.HighBaseModel import HighBaseModel
-from database.tools.core.meta import BaseModelMeta
-from database.tools.core.table_schema import TableSchema
-from database.tools.wal_comp import _LOG_INST, WAL
+from database.core.HighBaseModel import HighBaseModel
+from database.core.meta import BaseModelMeta
+from database.core.table_schema import TableSchema
+from database.wal.wal import _LOG_INST, WAL
 from pathlib import Path
 from pprint import pprint
 from dataclasses import dataclass
@@ -12,7 +12,7 @@ import os
 import timeit
 
 @dataclass(slots=True)
-class Test(HighBaseModel, metaclass=BaseModelMeta):
+class Test(HighBaseModel):
 
     id: int
     name: Annotated[str, 20]
@@ -24,7 +24,7 @@ class Test(HighBaseModel, metaclass=BaseModelMeta):
     # key or superkey
     primary_key: ClassVar[tuple[str, ...]] = ('id',)
     #byte_model: ClassVar[str] = 'I 20s 20s 10s 40s 13s'
-    path: ClassVar[Path] = Path(__file__).parent
+    #path: ClassVar[Path] = Path(__file__).parent
 
 """
 @WAL.decorator(Test, 'testing')
@@ -43,7 +43,7 @@ def test_transact(_):
 
 if __name__ == '__main__':
     #schema = TableSchema.init_meta(Test)
-    pprint(TableSchema.check_table_schema(Test, 'tests/test_database/test_model/data/meta.json'))
+    pprint(TableSchema.check_table_schema(Test, Test.path))
     """
     try:
         with WAL(Test, 'testing') as log_inst:

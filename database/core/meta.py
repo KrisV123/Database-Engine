@@ -1,8 +1,11 @@
+import sys
+
 from typing import Any, Union, ClassVar, get_args, get_origin, get_type_hints, assert_never
 from types import UnionType, NoneType
 from pathlib import Path
 
-from database.tools.core.types import T_AcceptType, C_TYPES_TO_STRUCT
+from database.core.types import T_AcceptType, C_TYPES_TO_STRUCT
+from database.core.table_schema import TableSchema
 
 class InvalidTableError(BaseException):
     pass
@@ -100,9 +103,21 @@ class Typing_helper:
         return '< ' + ' '.join(byte_model)
 
 
+def create_model_path(module_name: str) -> Path:
+    class_module = sys.modules[module_name]
+    class_str_path = class_module.__file__
+    if class_str_path is None:
+        raise InvalidTableError(
+            'class defining table for some reason does not have defined path'
+        )
+    class_folder = Path(class_str_path).parent
+    return class_folder
+
 class BaseModelMeta(type):
 
     def __new__(cls, name: str, bases: tuple[type], namespace: dict[str, Any]):
+        namespace['path'] = create_model_path(namespace['__module__'])
+
         byte_model = namespace.get('byte_model')
 
         if '__annotations__' in namespace and byte_model is None:

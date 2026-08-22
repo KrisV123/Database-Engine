@@ -4,9 +4,9 @@ from collections import defaultdict
 from typing import Literal, TypeVar, overload, cast
 from warnings import warn
 
-from database.tools.custom_eval import build_ast, eval_ast
-from database.tools.core.types import AcceptTypes
-from database.tools.core.row import RowList
+from database.custom_eval import build_ast, eval_ast
+from database.core.types import AcceptTypes
+from database.core.row import RowList
 
 T_diff = TypeVar('T_diff', bound=AcceptTypes)
 T_ident = TypeVar('T_ident', bound=AcceptTypes)

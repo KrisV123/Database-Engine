@@ -4,12 +4,15 @@
 /__pycache__
 
 /tester.py
-/database/person_model/__pycache__
-/database/tools/__pycache__
-/database/tools/core/__pycache__
+/database/__pycache__
+/database/core/__pycache__
+/database/wal/__pycache__
+
+/person_model/__pycache__
 
 /tests/.pytest_cache
-/tests/test_database/test_tools/__pycache__
+/tests/test_database/__pycache__
 /tests/test_model/__pycache__
 /tests/test_database/test_model/__pycache__
-/tests/test_database/test_tools/test_core/__pycache__
+/tests/test_database/test_core/__pycache__
+/tests/test_database/test_wal/__pycache__

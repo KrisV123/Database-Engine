@@ -1,9 +1,9 @@
 import pytest
 from collections.abc import Callable
 
-from database.tools.core.table_schema import get_byte_model_list, get_attr_offset_dict
-from database.tools.core.LowBaseModel import LowBaseModel
-from database.tools.core.HighBaseModel import HighBaseModel
+from database.core.table_schema import get_byte_model_list, get_attr_offset_dict
+from database.core.LowBaseModel import LowBaseModel
+from database.core.HighBaseModel import HighBaseModel
 
 """
 class Test_get_byte_model_list:

@@ -4,36 +4,37 @@ import mmap
 from pathlib import Path
 from contextlib import ExitStack
 
-from database.tools.custom_eval import build_ast, eval_ast
+from database.custom_eval import build_ast, eval_ast
 
-from database.tools.wal_comp import _LOG_INST
+from database.wal.wal import _LOG_INST
 
-from database.tools.core.types import AcceptTypes
-from database.tools.core.LowBaseModel import LowBaseModel
-from database.tools.core.table import Table
-from database.tools.core.row import RowList
+from database.core.types import AcceptTypes
+from database.core.LowBaseModel import LowBaseModel
+from database.core.table import Table
+from database.core.row import RowList
 
 class HighBaseModel(LowBaseModel):
 
     def send(self) -> None:
         """send instance into database"""
 
+        table_table = self.get_table_schema()
         logging = _LOG_INST.get()
         data = self.getstate()
 
         if logging is None:
-            pnt = self.find_empty_space(self.precalc_table)
-            db_size = Path(self.path / 'data/data.bin').stat().st_size
+            pnt = self.find_empty_space()
+            db_size = Path(table_table.data_path).stat().st_size
 
             if pnt is None or db_size <= pnt:
-                with open(self.path / 'data/data.bin', 'ab') as f:
+                with open(table_table.data_path, 'ab') as f:
                     f.write(data)
             else:
-                self._write_bytes(pnt, pnt + self.get_table_schema().inst_len, data)
+                self._write_bytes(pnt, pnt + table_table.inst_len, data)
 
             self._set_tombstone_flag(pnt)
         else:
-            entry = logging.Entry('SEND', None, None, data, None)
+            entry = logging.SendEntry(data)
             logging(entry)
 
     @classmethod
@@ -55,8 +56,8 @@ class HighBaseModel(LowBaseModel):
 
         table = Table({}, **attributes)
         with ExitStack() as stack:
-            data_path = cls.path / 'data/data.bin'
-            tomb_path = cls.path / 'data/tombstone.map'
+            data_path = table_schema.data_path
+            tomb_path = table_schema.tomb_path
 
             data_size = data_path.stat().st_size
             tomb_size = tomb_path.stat().st_size
@@ -113,16 +114,16 @@ class HighBaseModel(LowBaseModel):
         Returns number of deleted lines
         """
 
+        table_schema = cls.get_table_schema()
         logging = _LOG_INST.get()
         deleted_count = 0
-        table_schema = cls.get_table_schema()
         length = table_schema.inst_len
         ast = build_ast(expr)
         vvars = [attrib for attrib in table_schema.attributes if attrib in expr]
 
         with ExitStack() as stack:
-            data_path = cls.path / 'data/data.bin'
-            tomb_path = cls.path / 'data/tombstone.map'
+            data_path = table_schema.data_path
+            tomb_path = table_schema.tomb_path
 
             data_size = data_path.stat().st_size
             tomb_size = tomb_path.stat().st_size
@@ -169,7 +170,7 @@ class HighBaseModel(LowBaseModel):
                     else:
                         assert mv_data is not None
                         old_data = mv_data[glob_pnt : glob_pnt + length].tobytes()
-                        entry = logging.Entry('DELETE', glob_pnt, old_data, None, None)
+                        entry = logging.DeleteEntry(glob_pnt, old_data)
                         logging(entry)
         return deleted_count
 
@@ -177,19 +178,20 @@ class HighBaseModel(LowBaseModel):
     def delete_table(cls) -> None:
         """delete whole table"""
 
+        table_schema = cls.get_table_schema()
         logging = _LOG_INST.get()
 
         if logging:
-            with open(cls.path / 'data/tombstone.map', 'r+b') as tomb:
+            with open(table_schema.tomb_path, 'r+b') as tomb:
                 all_flags = tomb.read()
-                table_schema_bytes = cls.get_table_schema().to_json().encode('utf-8')
-                entry = logging.Entry('DELETE_TABLE', None, all_flags, None, table_schema_bytes)
+                table_schema_bytes = table_schema.to_json().encode('utf-8')
+                entry = logging.DeleteTableEntry(all_flags, table_schema_bytes)
                 logging(entry)
 
             open(cls.path / 'data/meta.json', 'w').close()
         else:
-            open(cls.path / 'data/tombstone.map', 'w').close()
-            open(cls.path / 'data/data.bin', 'w').close()
+            open(table_schema.tomb_path, 'w').close()
+            open(table_schema.data_path, 'w').close()
 
     @classmethod
     def update(cls, expr: str, **attrs: str) -> int:
@@ -207,10 +209,10 @@ class HighBaseModel(LowBaseModel):
         ```
         """
 
+        table_schema = cls.get_table_schema()
         logging = _LOG_INST.get()
         update_count = 0
         skip_check = True if expr == "True" else False
-        table_schema = cls.get_table_schema()
         length = table_schema.inst_len
         attributes = table_schema.attributes
         expr_ast = build_ast(expr)
@@ -228,8 +230,8 @@ class HighBaseModel(LowBaseModel):
         ]
 
         with ExitStack() as stack:
-            data_path = cls.path / 'data/data.bin'
-            tomb_path = cls.path / 'data/tombstone.map'
+            data_path = table_schema.data_path
+            tomb_path = table_schema.tomb_path
             data = stack.enter_context(open(data_path, 'r+b'))
             tomb = stack.enter_context(open(tomb_path, 'rb'))
 
@@ -313,7 +315,7 @@ class HighBaseModel(LowBaseModel):
                     if logging is not None:
                         old_data = mv_data[glob_pnt: glob_pnt + length].tobytes()
                         new_data = bytes(log_mask + log_buff)
-                        entry = logging.Entry('UPDATE', glob_pnt, old_data, new_data, None)
+                        entry = logging.UpdateEntry(glob_pnt, old_data, new_data)
                         logging(entry)
 
                     del log_mask

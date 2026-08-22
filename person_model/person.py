@@ -3,13 +3,13 @@ from dataclasses import dataclass
 from typing import ClassVar, Annotated
 from pprint import pprint
 
-from database.tools.core.HighBaseModel import HighBaseModel
-from database.tools.core.meta import BaseModelMeta
-from database.tools.wal_comp import WAL
-from database.tools.core.table_schema import TableSchema
+from database.core.HighBaseModel import HighBaseModel
+from database.core.meta import BaseModelMeta
+from database.wal.wal import WAL
+from database.core.table_schema import TableSchema
 
 @dataclass(slots=True)
-class Model(HighBaseModel, metaclass=BaseModelMeta):
+class Model(HighBaseModel):
 
     id: Annotated[int, "unsigned int"]
     krsne: Annotated[str, 20]
@@ -22,7 +22,7 @@ class Model(HighBaseModel, metaclass=BaseModelMeta):
     # key or superkey
     primary_key: ClassVar[tuple[str, ...]] = ('id',)
     #byte_model: ClassVar[str] = '< I 20s 20s 20s f ? I'
-    path: ClassVar[Path] = Path(__file__).parent
+    #path: ClassVar[Path] = Path(__file__).parent
 
 
 def setup_table() -> None:
@@ -49,7 +49,7 @@ def delete_table() -> None:
     Model.delete_table()
     pprint(Model.set())
 
-def rollback_log(file: str):
+def rollback_log(file: Path):
     WAL.rollback(Model, file)
     pprint(Model.set())
 
@@ -83,7 +83,7 @@ if __name__ == '__main__':
     #print(Model.get_byte_model_list())
     #print(Model.get_endianness_symbol())
 
-    """
+
     Model.delete_table()
 
     model = Model(
@@ -94,7 +94,7 @@ if __name__ == '__main__':
     pprint(Model.set())
 
     Model.delete_table()
-    """
+
 
     #Model.delete_table()
     """

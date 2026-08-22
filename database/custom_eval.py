@@ -2,7 +2,7 @@ from evaluator import (
     Lexer, Parser, ConstantFolder, Evaluator,
     diagnose, nodes, EvaluatorError, atom_types
 )
-from database.tools.core.types import AcceptTypes
+from database.core.types import AcceptTypes
 
 def build_ast(expr: str) -> nodes:
     """

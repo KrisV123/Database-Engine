@@ -1,7 +1,7 @@
 from __future__ import annotations
 import pytest #type:ignore[import-not-found]
 
-from database.tools.core.row import RowList
+from database.core.row import RowList
 
 @pytest.fixture
 def line_1() -> RowList[int | str]:

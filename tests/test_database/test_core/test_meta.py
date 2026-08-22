@@ -2,9 +2,9 @@ import pytest
 
 from types import NoneType
 
-from database.tools.core.HighBaseModel import HighBaseModel
-from database.tools.core.meta import Typing_helper, InvalidTableError
-from database.tools.core.types import T_AcceptType
+from database.core.HighBaseModel import HighBaseModel
+from database.core.meta import Typing_helper, InvalidTableError
+from database.core.types import T_AcceptType
 
 class Test_Typing_helper:
 

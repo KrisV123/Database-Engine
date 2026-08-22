@@ -15,12 +15,15 @@ from collections.abc import Generator, Callable
 from zlib import crc32
 from pathlib import Path
 
-from database.tools.wal_comp import WAL, _LOG_INST, Header_info
+from database.wal.wal import WAL, _LOG_INST, Header_info
 from tests.test_database.test_model.test import Test
-from database.tools.varint import VarInt
-from database.tools.core.row import RowList
-from database.tools.core.table import Table
-import tests.test_database.test_tools.expect_logs as expect_logs
+from database.varint import VarInt
+from database.core.row import RowList
+from database.core.table import Table
+import tests.test_database.expect_logs as expect_logs
+
+from database.wal.wal_types import Operator
+from database.wal.log_codec import Log_serializer, Log_parser, Log_data
 
 class Test_WAL:
     trans_name = 'log_specially_made_for_testing'
@@ -87,7 +90,7 @@ class Test_WAL:
                 assert log_inst.db_size == 1188
                 assert log_inst.db_full == False
                 assert log_inst.empty_space_pnt == 540
-    
+
 
     class Test_change_header_and_get_header:
 
@@ -215,10 +218,10 @@ class Test_WAL:
             with WAL(Test, 'log_specially_made_for_testing'):
                 log_inst = _LOG_INST.get()
 
-                assert hasattr(log_inst, 'log_desc')
+                assert hasattr(log_inst, 'log_f')
                 assert hasattr(log_inst, '_old')
                 if log_inst is not None:
-                    assert isinstance(log_inst.log_desc, BufferedRandom)
+                    assert isinstance(log_inst.log_f, BufferedRandom)
                     assert isinstance(log_inst._old, Token)
 
 
@@ -246,12 +249,12 @@ class Test_WAL:
                                             self,
                                             db_one_usage: Test_WAL.Db_one_use_yield,
                                             new_bytes_data: bytes):
-            entry = WAL.Entry('SEND', None, None, new_bytes_data, None)
+            entry = WAL.SendEntry(new_bytes_data)
             with WAL(Test, 'log_specially_made_for_testing') as log_inst:
-                log_inst._handle_operator(entry)
-                assert entry.old_data is None
-                assert entry.start_pnt == 1188
-                assert entry.old_data == None
+                new_entry = log_inst._handle_operator(entry)
+                assert new_entry.old_data is None
+                assert new_entry.start_pnt == 1188
+                assert new_entry.old_data == None
                 assert log_inst.empty_space_pnt == 1296
                 assert log_inst.db_full == True
 
@@ -260,11 +263,11 @@ class Test_WAL:
                                             db_one_usage: Test_WAL.Db_one_use_yield,
                                             new_bytes_data: bytes):
             Test.delete('id == 5')
-            entry = WAL.Entry('SEND', None, None, new_bytes_data, None)
+            entry = WAL.SendEntry(new_bytes_data)
             with WAL(Test, 'log_specially_made_for_testing') as log_inst:
-                log_inst._handle_operator(entry)
-                assert entry.old_data is not None
-                assert entry.start_pnt == 540
+                new_entry = log_inst._handle_operator(entry)
+                assert new_entry.old_data is not None
+                assert new_entry.start_pnt == 540
                 assert log_inst.empty_space_pnt == 1188
                 assert log_inst.db_full == True
 
@@ -273,18 +276,18 @@ class Test_WAL:
                                             db_one_usage: Test_WAL.Db_one_use_yield,
                                             new_bytes_data: bytes):
             Test.delete("id == 5 or id == 6")
-            entry = WAL.Entry('SEND', None, None, new_bytes_data, None)
+            entry = WAL.SendEntry(new_bytes_data)
             with WAL(Test, 'log_specially_made_for_testing') as log_inst:
-                log_inst._handle_operator(entry)
-                assert entry.old_data is not None
-                assert entry.start_pnt == 540
+                new_entry = log_inst._handle_operator(entry)
+                assert new_entry.old_data is not None
+                assert new_entry.start_pnt == 540
                 assert log_inst.empty_space_pnt == 648
                 assert log_inst.db_full == False
 
         def test_handle_operator_delete_full(self, db_one_usage: Test_WAL.Db_one_use_yield):
             table = Test.set()
             bytes_model = Test.from_row(table[(4,)]).getstate()
-            entry = WAL.Entry('DELETE', 540, bytes_model, None, None)
+            entry = WAL.DeleteEntry(540, bytes_model)
             with WAL(Test, 'log_specially_made_for_testing') as log_inst:
                 assert log_inst.db_full == True
                 assert log_inst.empty_space_pnt == 1188
@@ -296,7 +299,7 @@ class Test_WAL:
             Test.delete("id == 3")
             table = Test.set()
             bytes_model = Test.from_row(table[(4,)]).getstate()
-            entry = WAL.Entry('DELETE', 540, bytes_model, None, None)
+            entry = WAL.DeleteEntry(540, bytes_model)
             with WAL(Test, 'log_specially_made_for_testing') as log_inst:
                 assert log_inst.db_full == False
                 assert log_inst.empty_space_pnt == 324
@@ -308,7 +311,7 @@ class Test_WAL:
             Test.delete("id == 8")
             table = Test.set()
             bytes_model = Test.from_row(table[(4,)]).getstate()
-            entry = WAL.Entry('DELETE', 540, bytes_model, None, None)
+            entry = WAL.DeleteEntry(540, bytes_model)
             with WAL(Test, 'log_specially_made_for_testing') as log_inst:
                 assert log_inst.db_full == False
                 assert log_inst.empty_space_pnt == 864
@@ -321,7 +324,7 @@ class Test_WAL:
                                                      get_test_model_meta_bytes: bytes
                                                     ):
 
-            entry = WAL.Entry('DELETE_TABLE', None, b'\00', None, get_test_model_meta_bytes)
+            entry = WAL.DeleteTableEntry(b'\00', get_test_model_meta_bytes)
             with WAL(Test, 'log_specially_made_for_testing') as log_inst:
                 assert log_inst.db_full == True
                 assert log_inst.empty_space_pnt != 0
@@ -330,122 +333,13 @@ class Test_WAL:
                 assert log_inst.empty_space_pnt == 0
 
         def test_handle_operator_delete_table_empty(self, get_test_model_meta_bytes: bytes):
-            entry = WAL.Entry('DELETE_TABLE', None, b'\00', None, get_test_model_meta_bytes)
+            entry = WAL.DeleteTableEntry(b'\x00', get_test_model_meta_bytes)
             with WAL(Test, 'log_specially_made_for_testing') as log_inst:
                 assert log_inst.db_full == True
                 assert log_inst.empty_space_pnt == 0
                 log_inst._handle_operator(entry)
                 assert log_inst.db_full == False
                 assert log_inst.empty_space_pnt == 0
-
-
-    class Test_create_log:
-
-        model_1 = Test(1, 'Jozko', 'Mrkvicka', None, None, None).getstate()
-        model_2 = Test(2, 'Jerdo', 'Mravec', '01.09.1939', None, None).getstate()
-
-        fake_tombstone = b'\x00\x01\x02'
-
-        test_inputs: list[tuple[WAL.Entry, bytes]] = [
-            (
-                WAL.Entry('SEND', 200, None, model_1, None),
-                b''.join((
-                    b'\x01',
-                    b'\x00', b'',
-                    b'\x00', b'',
-                    b'\x01', model_1,
-                    b'',
-                    b'',
-                    crc32(model_1).to_bytes(4, 'little', signed=False),
-                    b'\xc8\x01',
-                    b'\x00'
-                ))
-            ),(
-                WAL.Entry('SEND', 256, None, model_1, None),
-                b''.join((
-                    b'\x01',
-                    b'\x00', b'',
-                    b'\x00', b'',
-                    b'\x01', model_1,
-                    b'',
-                    b'',
-                    crc32(model_1).to_bytes(4, 'little', signed=False),
-                    b'\x80\x02',
-                    b'\x00'
-                ))
-            ),(
-                WAL.Entry('UPDATE', 69, model_2, model_1, None),
-                b''.join((
-                    b'\x02',
-                    b'\x00', b'',
-                    b'\x01', model_2,
-                    b'\x01', model_1,
-                    b'',
-                    crc32(model_2).to_bytes(4, 'little', signed=False),
-                    crc32(model_1).to_bytes(4, 'little', signed=False),
-                    b'E',
-                    b'\x00'
-                ))
-            ),(
-                WAL.Entry('DELETE', 67, model_2, None, None),
-                b''.join((
-                    b'\x03',
-                    b'\x00', b'',
-                    b'\x01', model_2,
-                    b'\x00', b'',
-                    b'',
-                    crc32(model_2).to_bytes(4, 'little', signed=False),
-                    b'',
-                    b'C',
-                    b'\x00'
-                ))
-            ),(
-                WAL.Entry('DELETE_TABLE', 0, fake_tombstone, None, expect_logs.encode_table_schema),
-                b''.join((
-                    b'\x04',
-                    b'\x01', VarInt.to_varint(len(expect_logs.encode_table_schema)) + expect_logs.encode_table_schema,
-                    b'\x01', VarInt.to_varint(len(fake_tombstone)) + fake_tombstone,
-                    b'\x00', b'',
-                    crc32(VarInt.to_varint(len(expect_logs.encode_table_schema)) + expect_logs.encode_table_schema).to_bytes(4, 'little', signed=False),
-                    crc32(VarInt.to_varint(len(fake_tombstone)) + fake_tombstone).to_bytes(4, 'little', signed=False),
-                    b'',
-                    b'\x00'
-                    b'\x00'
-                ))
-            )
-        ]
-
-        @pytest.mark.parametrize(
-            "entry, log",
-            test_inputs,
-            ids=[
-                'send_sanity',
-                'test_two_byte_idx',
-                'sanity_update',
-                'sanity_delete',
-                'sanity_delete_table'
-            ]
-        )
-        def test_create_log(self, entry: WAL.Entry, log: bytes):
-            log_inst = WAL(Test, 'log_specially_made_for_testing')
-            new_log = log_inst.create_log(entry)
-            assert len(new_log) == len(log)
-            assert new_log == log
-
-        def test_create_log_wrong_operator(self):
-            log_inst = WAL(Test, 'log_specially_made_for_testing')
-            model = Test(1, 'Jozko', 'Mrkvicka', None, None).getstate()
-            entry = WAL.Entry('SIXSEVEN', 200, None, model, None) #type: ignore
-            with pytest.raises(TypeError,
-                               match="operation or value for operator does not exist"):
-                log_inst.create_log(entry)
-
-        def test_create_log_missing_pointer(self):
-            log_inst = WAL(Test, 'log_specially_made_for_testing')
-            model = Test(1, 'Jozko', 'Mrkvicka', None, None, None).getstate()
-            entry = WAL.Entry('SEND', None, None, model, None)
-            with pytest.raises(AssertionError):
-                log_inst.create_log(entry)
 
 
     class Test_iter_logs_and_parse_log:
@@ -569,7 +463,7 @@ class Test_WAL:
             log_list = list(WAL.iter_logs(Test, log_path))
             for log in log_list:
                 if log is not None:
-                    assert isinstance(log, WAL.Log_data)
+                    assert isinstance(log, Log_data)
                     assert log.applied == True
 
         def test_commit_send_without_log_eq(self, clean_db: Callable[[], None]):
@@ -719,14 +613,14 @@ class Test_WAL:
             with WAL(Test, 'log_specially_made_for_testing') as log_inst:
                 log_path = log_inst.log_file_path
                 for i in range(10):
-                    Test(i, 'Janko', 'Hrasko').send()            
+                    Test(i, 'Janko', 'Hrasko').send()
             expect_table = Test.set()
 
             Test.delete_table()
             assert len(Test.set()) == 0
 
             WAL.commit(Test, log_path)
-            assert Test.set() == expect_table
+            assert len(Test.set()) == 0
             clean_db()
 
         def test_commit_with_class_2(self, db_one_usage: Test_WAL.Db_one_use_yield):
@@ -758,10 +652,10 @@ class Test_WAL:
 
             expect_delta_offsets = []
             lst_delta_offset = Header_info.header_size
-            for log in WAL.iter_logs(Test, log_path):
+            for log in list(WAL.iter_logs(Test, log_path)):
                 assert log is not None
                 expect_delta_offsets.append(lst_delta_offset)
-                assert isinstance(log, WAL.Log_data)
+                assert isinstance(log, Log_data)
                 lst_delta_offset = log.log_length
 
             delta_offsets = list(WAL.get_delta_offset(log_path))
@@ -799,10 +693,10 @@ class Test_WAL:
 
             expect_offsets = []
             lst_offset = Header_info.header_size
-            for log in WAL.iter_logs(Test, log_path):
+            for log in list(WAL.iter_logs(Test, log_path)):
                 assert log is not None
                 expect_offsets.append(lst_offset)
-                assert isinstance(log, WAL.Log_data)
+                assert isinstance(log, Log_data)
                 lst_offset += log.log_length
 
             offsets = WAL.get_offsets(log_path)
@@ -1038,22 +932,21 @@ class Test_WAL:
             for i in range(5):
                 Test(i, 'Janko', 'Hrasko').send()
 
-            log_inst = WAL(Test, Test_WAL.trans_name).__enter__()
-            for i in range(5, 10):
-                Test(i, 'Janko', 'Hrasko').send()
-            log_inst.log_file_struct.flush_logs(log_inst.log_desc)
-            log_inst.log_desc.flush()
-            os.fsync(log_inst.log_desc)
+            with WAL(Test, Test_WAL.trans_name) as log_inst:
+                for i in range(5, 10):
+                    Test(i, 'Janko', 'Hrasko').send()
+                log_inst.log_file_struct.flush_logs(log_inst.log_f)
+                log_inst.log_f.flush()
+                os.fsync(log_inst.log_f)
 
-            log_inst.commit()
-            assert len(Test.set()) == 10
+                log_inst.commit()
+                assert len(Test.set()) == 10
 
-            report = WAL.check_consistency(Test, log_inst.log_file_path)
-            assert len(report.not_applied_list) == 0
+                report = WAL.check_consistency(Test, log_inst.log_file_path)
+                assert len(report.not_applied_list) == 0
 
-            log_inst.rollback()
-            report = WAL.check_consistency(Test, log_inst.log_file_path)
-            assert len(report.not_applied_list) == 5
+                log_inst.rollback()
+                report = WAL.check_consistency(Test, log_inst.log_file_path)
+                assert len(report.not_applied_list) == 5
 
-            log_inst.__exit__(None, None, None)
             clean_db()

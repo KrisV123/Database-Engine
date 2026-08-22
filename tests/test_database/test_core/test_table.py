@@ -1,8 +1,8 @@
 from __future__ import annotations
 import pytest #type:ignore[import-not-found]
 
-from database.tools.core.table import Table
-from database.tools.core.row import RowList
+from database.core.table import Table
+from database.core.row import RowList
 
 QuadRowList = tuple[
     RowList[int | str | None],

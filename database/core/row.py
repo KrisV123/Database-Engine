@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from collections.abc import Iterable
 from typing import TypeVar, overload
-from database.tools.core.types import AcceptTypes
+from database.core.types import AcceptTypes
 
 class RowList[T = AcceptTypes](list[T]):
     """

@@ -6,11 +6,12 @@ from functools import cache
 from contextlib import ExitStack
 from typing import Any, TypeVar, ClassVar
 
-from database.tools.core.types import AcceptTypes, STRUCT_FORMAT_INFO, PLACEHOLDER
-from database.tools.core.row import RowList
-from database.tools.core.table_schema import TableSchema
+from database.core.types import AcceptTypes, STRUCT_FORMAT_INFO, PLACEHOLDER
+from database.core.row import RowList
+from database.core.table_schema import TableSchema
+from database.core.meta import BaseModelMeta
 
-class LowBaseModel:
+class LowBaseModel(metaclass=BaseModelMeta):
     try:
         # for POSIX platforms
         _os_pg_align = os.sysconf("SC_PAGE_SIZE") #type:ignore
@@ -18,16 +19,16 @@ class LowBaseModel:
         # for Windows platform
         _os_pg_align = mmap.ALLOCATIONGRANULARITY #type:ignore
 
-    path: ClassVar[Path] = Path()
-    precalc_table = True # precalculate table for first zero in byte
+    path: ClassVar[Path]
     _table_schema: ClassVar[TableSchema | None] = None
 
     @classmethod
     def get_table_schema(cls) -> TableSchema:
+
         """
         cache precompiled model metadata, that returns in TableSchema.
         TableSchema contains ground truth data about model and derived metadata.
-        
+
         TableSchema is also using lazy singleton patern to evaluate.
 
         In first runtime evaluation, function checks, if meta.json exists.
@@ -44,7 +45,7 @@ class LowBaseModel:
             if meta_exists and meta_size == 0:
                 cls._table_schema = TableSchema.init_meta(cls)
             elif meta_exists:
-                cls._table_schema = TableSchema.check_table_schema(cls, cls.path / 'data/meta.json')
+                cls._table_schema = TableSchema.check_table_schema(cls, cls.path)
             else:
                 cls._table_schema = TableSchema.init_meta(cls)
             return cls._table_schema
@@ -120,9 +121,10 @@ class LowBaseModel:
     def read_bytes(cls, start: int, end: int) -> bytes:
         """return bytes from start point to end point"""
 
+        table_schema = cls.get_table_schema()
         start_align = (start // cls._os_pg_align) * cls._os_pg_align
 
-        with (open(cls.path / 'data/data.bin', 'rb') as f,
+        with (open(table_schema.data_path, 'rb') as f,
               mmap.mmap(f.fileno(),
                         end - start_align,
                         access=mmap.ACCESS_READ,
@@ -134,9 +136,10 @@ class LowBaseModel:
     def _write_bytes(cls, start: int, end: int, txt: bytes) -> None:
         """write bytes from start point to end point. Not recomended to use"""
 
+        table_schema = cls.get_table_schema()
         start_align = (start // cls._os_pg_align) * cls._os_pg_align
 
-        with (open(cls.path / 'data/data.bin', 'r+b') as f,
+        with (open(table_schema.data_path, 'r+b') as f,
               mmap.mmap(f.fileno(),
                         end - start_align,
                         access=mmap.ACCESS_WRITE,
@@ -194,36 +197,6 @@ class LowBaseModel:
         return (False if mm[segment] & (1 << (7 - offset)) != 0 else True)
 
     @classmethod
-    def _add_tombstone_flag(cls) -> None:
-        """
-        Add new bit with new byte at the end of tombstone.map.
-        Internal method, not meant to be used
-
-        NEEDS TO BE TESTED!
-        """
-
-        data_size = (cls.path / 'data/data.bin').stat().st_size
-        tomb_path = cls.path / 'data/tombstone.map'
-
-        inst_len = cls.get_table_schema().inst_len
-        ammount = data_size // inst_len
-
-        if ammount % 8 != 0:
-            inst_ord = ammount // inst_len
-            segment, offset = divmod(inst_ord, 8)
-            align_offset = (segment // cls._os_pg_align) * cls._os_pg_align
-            rel_segment = segment - align_offset
-            with (open(tomb_path, 'r+b') as f,
-                  mmap.mmap(f.fileno(),
-                            rel_segment + 1,
-                            access=mmap.ACCESS_WRITE,
-                            offset = align_offset) as mm):
-                mm[-1] |= (1 << (7 - offset))
-        else:
-            with open(tomb_path, 'a+b') as f:
-                f.write(bytes([1 << 7]))
-
-    @classmethod
     def _set_tombstone_flag(cls, pnt: int | None) -> None:
         """
         Set bit in tombstone file to 1 (Exists). Pointer represents
@@ -232,7 +205,8 @@ class LowBaseModel:
         Internal method, not meant to be used
         """
 
-        tomb_path = cls.path / 'data/tombstone.map'
+        table_schema = cls.get_table_schema()
+        tomb_path = table_schema.tomb_path
         if pnt is None:
             with open(tomb_path, 'a+b') as f:
                 f.write(bytes([1 << 7]))
@@ -252,8 +226,15 @@ class LowBaseModel:
                             offset = align_offset) as mm):
                 mm[rel_segment] |= (1 << (7 - offset))
 
+
     class _EmptySpaceUtils:
         """helper methods for find_empty_space method"""
+
+        fst_zero_table = {
+            byte: (8 - int((~byte) & 0b11111111).bit_length()) for byte in range(255)
+        } | {255: None}
+        """
+        lookup table for position of fisrt zero bit in byte. For 255 is binded None"""
 
         def __init__(self, outer: type[LowBaseModel]):
             self._outer = outer
@@ -264,17 +245,6 @@ class LowBaseModel:
                 """offset is None, what should be impossible
                 (fst_zero_table returned 255 byte, which don't have zero)"""
             )
-
-        @cache
-        def calc_fst_zero_table(self) -> dict[int, int | None]:
-            """
-            Precalculate lookup table for first zero in every byte.
-            None only for byte 255. Shouldn't be gotten
-            """
-
-            return {
-                byte: (8 - int((~byte) & 0b11111111).bit_length()) for byte in range(255)
-            } | {255: None}
 
         def pos_constructor(self, segment: int | None, offset: int | None) -> int | None:
             """
@@ -291,8 +261,7 @@ class LowBaseModel:
                            mv: memoryview,
                            begin_segment: int,
                            begin_offset: int,
-                           end_segment: int | None,
-                           precalc_table: bool) -> tuple[int | None, int | None]:
+                           end_segment: int | None) -> tuple[int | None, int | None]:
             """
             subpart of find empty space. Searching edges at the start and the end
             of find_empty_space smaller then unsigned long long int.
@@ -309,10 +278,7 @@ class LowBaseModel:
                     byte |= skip_mask
                     if byte == 0b11111111:
                         continue
-                offset = (
-                    self.calc_fst_zero_table()[byte] if precalc_table
-                    else 8 - int((~byte) & 0b11111111).bit_length()
-                )
+                offset = self.fst_zero_table[byte]
                 if offset is None:
                     raise self.byte_256_error()
                 segment = begin_segment + idx
@@ -320,8 +286,7 @@ class LowBaseModel:
             return (segment, offset)
 
     @classmethod
-    def find_empty_space(cls, precalc_table: bool=True,
-                         start_pnt: int | None=None) -> int | None:
+    def find_empty_space(cls, start_pnt: int | None=None) -> int | None:
         """
         Tries to find empty space. Return position in data.bin.
         If it doesn't find any empty space, returns None. Values for
@@ -331,13 +296,14 @@ class LowBaseModel:
         value is pointer to the data.bin file. Default pnt is None.
         """
 
+        table_schema = cls.get_table_schema()
         utils = cls._EmptySpaceUtils(cls)
         inst_len = cls.get_table_schema().inst_len
         if start_pnt is not None and start_pnt % inst_len != 0:
             raise ValueError("start_pointer is not aligned with the instances")
 
         with ExitStack() as stack:
-            tomb_path = cls.path / 'data/tombstone.map'
+            tomb_path = table_schema.tomb_path
             f = stack.enter_context(open(tomb_path, 'rb'))
 
             if tomb_path.stat().st_size == 0:
@@ -359,7 +325,7 @@ class LowBaseModel:
             else:
                 fst_q_align = min((begin_segment >> 3) * 8 + 8, (len(mv) >> 3) * 8)
             segment, offset = utils.smaller_blocks(
-                mv, begin_segment, begin_offset, fst_q_align, precalc_table)
+                mv, begin_segment, begin_offset, fst_q_align)
 
             q_align_start = fst_q_align if start_pnt is not None else 0
             q_align_end = (len(mv) >> 8) * 8
@@ -384,7 +350,7 @@ class LowBaseModel:
             tail_start = max(q_align_end, begin_segment)
 
             segment, offset = utils.smaller_blocks(
-                mv, tail_start, begin_offset, None, precalc_table)
+                mv, tail_start, begin_offset, None)
 
         return utils.pos_constructor(segment, offset)
 
@@ -392,7 +358,8 @@ class LowBaseModel:
     def read_tombstone(cls) -> bytes:
         """reads tombstone file"""
 
-        with open(cls.path / 'data/tombstone.map', 'rb') as f:
+        table_schema = cls.get_table_schema()
+        with open(table_schema.tomb_path, 'rb') as f:
             return f.read()
 
     @classmethod

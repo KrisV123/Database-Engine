@@ -17,7 +17,6 @@ class Model(HighBaseModel):
     dat_nar: Annotated[str, 20] | None
     vyska: Annotated[float, "float"] | None
     ma_vodicak: bool | None
-    neviem: Annotated[int, "unsigned int"] | None
 
     # key or superkey
     primary_key: ClassVar[tuple[str, ...]] = ('id',)
@@ -29,7 +28,7 @@ def setup_table() -> None:
     for i in range(10):
         model = Model(
             i, 'Kristian', None, '20.01.2001',
-            187.5, True, i
+            187.5, True
         )
         model.send()
     pprint(Model.set())
@@ -55,7 +54,7 @@ def rollback_log(file: Path):
 
 def combined_tracked_transaction() -> None:
     with WAL(Model, 'testing'):
-        new_line = Model(110, 'Andrej', 'Mesko', '18.02.2001', 162.3, True, 1)
+        new_line = Model(110, 'Andrej', 'Mesko', '18.02.2001', 162.3, True)
         new_line.send()
 
         Model.delete('2 < id < 8')
@@ -64,7 +63,7 @@ def combined_tracked_transaction() -> None:
 
         Model.delete_table()
 
-        #Model(5, 'Jozko', 'Mrkvicka', '69.7.2000', 110.2, False, 1).send()
+        Model(5, 'Jozko', 'Mrkvicka', '69.7.2000', 110.2, False).send()
 
 def untracked_update() -> None:
     Model.update('id < 100', krsne="'Adam'")
@@ -83,25 +82,43 @@ if __name__ == '__main__':
     #print(Model.get_byte_model_list())
     #print(Model.get_endianness_symbol())
 
+    import time
 
+    for i in range(1000):
+        Model(i, 'Kristian', 'Vesely', '20.01.2001', 187.5, True).send()
+
+    start = time.time()
+
+    for i in range(10000):
+        Model.delete(f'id == {i}')
+        #Model.update(f"id == {i}", krsne="'Andrej'")
+
+    end = time.time()
+
+    print(end - start)
+    Model.delete_table()
+
+    """
     Model.delete_table()
 
     model = Model(
         1, 'Kristian', 'Vesely', '20.01.2001',
-        187.5, True, 1
+        187.5, True
     )
     model.send()
     pprint(Model.set())
 
     Model.delete_table()
-
+    """
 
     #Model.delete_table()
+
     """
     Model.delete_table()
     setup_table()
     combined_tracked_transaction()
     pprint(Model.set())
+    Model.delete_table()
     """
 
     #WAL.rollback(Model, 'database/person_model/data/wal_logs/testing_26-08-12_19-20-179990.log')

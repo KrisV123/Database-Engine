@@ -27,7 +27,8 @@ class IOutils:
         end_offset = offset + length
         lst_page_align = ((end_offset + page_align - 1) // page_align) * page_align
         aligned_end = lst_page_align - align_offset
-        align_length = min(len(mm), aligned_end)
+        max_length = len(mm) - align_offset
+        align_length = min(max_length, aligned_end)
         mm.flush(align_offset, align_length)
 
     @staticmethod

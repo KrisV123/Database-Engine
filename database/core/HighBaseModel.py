@@ -5,9 +5,7 @@ from pathlib import Path
 from contextlib import ExitStack
 
 from database.custom_eval import build_ast, eval_ast
-
 from database.wal.wal import _LOG_INST
-
 from database.core.types import AcceptTypes
 from database.core.LowBaseModel import LowBaseModel
 from database.core.table import Table
@@ -16,21 +14,21 @@ from database.core.row import RowList
 class HighBaseModel(LowBaseModel):
 
     def send(self) -> None:
-        """send instance into database"""
+        "send instance into database"
 
-        table_table = self.get_table_schema()
+        table_schema = self.get_table_schema()
         logging = _LOG_INST.get()
         data = self.getstate()
 
         if logging is None:
             pnt = self.find_empty_space()
-            db_size = Path(table_table.data_path).stat().st_size
+            db_size = Path(table_schema.data_path).stat().st_size
 
             if pnt is None or db_size <= pnt:
-                with open(table_table.data_path, 'ab') as f:
+                with open(table_schema.data_path, 'ab') as f:
                     f.write(data)
             else:
-                self._write_bytes(pnt, pnt + table_table.inst_len, data)
+                self._write_bytes(pnt, pnt + table_schema.inst_len, data)
 
             self._set_tombstone_flag(pnt)
         else:
@@ -104,7 +102,7 @@ class HighBaseModel(LowBaseModel):
                     list_params.append_named(txt, attr)
 
                 table[tuple(id_list_params)] = list_params
-                del prefix
+                prefix.release()
         return table
 
     @classmethod
@@ -117,7 +115,9 @@ class HighBaseModel(LowBaseModel):
         table_schema = cls.get_table_schema()
         logging = _LOG_INST.get()
         deleted_count = 0
-        length = table_schema.inst_len
+        length, mask_len = table_schema.inst_len, table_schema.mask_len
+        attr_offset_dict = table_schema.attr_offset_dict
+        attr_ctype_dict = table_schema.attr_ctype_dict
         ast = build_ast(expr)
         vvars = [attrib for attrib in table_schema.attributes if attrib in expr]
 
@@ -128,7 +128,7 @@ class HighBaseModel(LowBaseModel):
             data_size = data_path.stat().st_size
             tomb_size = tomb_path.stat().st_size
             cls.check_structure_sz_consistency(data_size, tomb_size)
-            if data_size == 0 or tomb_size == 0:
+            if data_size == 0 and tomb_size == 0:
                 return deleted_count
 
             data = stack.enter_context(open(data_path, 'rb'))
@@ -137,22 +137,19 @@ class HighBaseModel(LowBaseModel):
                 mmap.mmap(data.fileno(), 0, access=mmap.ACCESS_READ))
             mm_tomb = stack.enter_context(
                 mmap.mmap(tomb.fileno(), 0, access=mmap.ACCESS_WRITE))
-            if logging is None:
-                mv_data = None
-            else:
-                mv_data = stack.enter_context(memoryview(mm_data))
+            mv_data = None if logging is None else stack.enter_context(memoryview(mm_data))
 
             for glob_pnt in range(0, len(mm_data), length):
                 if cls.is_deleted_flag(glob_pnt, mm_tomb):
                     continue
 
-                mask = cls.get_bitmask_prefix(glob_pnt)
+                mask = mm_data[glob_pnt: glob_pnt + mask_len]
                 vals: dict[str, AcceptTypes] = {}
 
                 for var in vvars:
                     if not cls.check_none_value(mask, var):
-                        start = glob_pnt + table_schema.mask_len + table_schema.attr_offset_dict[var]
-                        val, = struct.unpack_from(table_schema.attr_ctype_dict[var], mm_data, start)
+                        start = glob_pnt + mask_len + attr_offset_dict[var]
+                        val, = struct.unpack_from(attr_ctype_dict[var], mm_data, start)
 
                         vals[var] = (
                             cls.sanitize(val).decode('utf-8')
@@ -176,7 +173,7 @@ class HighBaseModel(LowBaseModel):
 
     @classmethod
     def delete_table(cls) -> None:
-        """delete whole table"""
+        "delete whole table"
 
         table_schema = cls.get_table_schema()
         logging = _LOG_INST.get()
@@ -212,8 +209,8 @@ class HighBaseModel(LowBaseModel):
         table_schema = cls.get_table_schema()
         logging = _LOG_INST.get()
         update_count = 0
-        skip_check = True if expr == "True" else False
-        length = table_schema.inst_len
+        skip_check = expr == "True"
+        length, mask_len = table_schema.inst_len, table_schema.mask_len
         attributes = table_schema.attributes
         expr_ast = build_ast(expr)
 
@@ -251,8 +248,7 @@ class HighBaseModel(LowBaseModel):
                 if cls.is_deleted_flag(glob_pnt, mm_tomb):
                     continue
 
-                mask = cls.get_bitmask_prefix(glob_pnt)
-                mask_len = len(mask)
+                mask = mv_data[glob_pnt: glob_pnt + mask_len]
                 vals: dict[str, AcceptTypes] = {}
 
                 for var in vvars:
@@ -271,7 +267,7 @@ class HighBaseModel(LowBaseModel):
                     update_count += 1
 
                     # params for logging
-                    log_mask = mv_data[glob_pnt: glob_pnt + mask_len].tobytes()
+                    log_mask = bytearray(mv_data[glob_pnt: glob_pnt + mask_len])
                     log_buff = bytearray(
                         mv_data[glob_pnt + mask_len: glob_pnt + length].tobytes())
 
@@ -281,12 +277,10 @@ class HighBaseModel(LowBaseModel):
                         is_none = cls.check_none_value(mask, attr)
 
                         if new_val is None and not is_none:
-                            mask = cls._flip_prefix_bit(
-                                bytearray(mask), attr_ord[attr])
                             if logging is None:
-                                mv_data[glob_pnt: glob_pnt + mask_len] = mask
+                                cls._flip_prefix_bit(mask, attr_ord[attr])
                             else:
-                                log_mask = mask
+                                cls._flip_prefix_bit(log_mask, attr_ord[attr])
 
                         elif new_val is not None and not is_none:
                             if isinstance(new_val, str):
@@ -299,16 +293,13 @@ class HighBaseModel(LowBaseModel):
                                     log_buff, attr_offset_dict[attr], new_val)
 
                         elif new_val is not None and is_none:
-                            mask = cls._flip_prefix_bit(
-                                bytearray(mask), attr_ord[attr])
                             if isinstance(new_val, str):
                                 new_val = cls.sanitize_str(new_val).encode('utf-8')
-
                             if logging is None:
-                                mv_data[glob_pnt: glob_pnt + mask_len] = mask
+                                cls._flip_prefix_bit(mask, attr_ord[attr])
                                 attr_struct_dict[attr].pack_into(mm_data, start, new_val)
                             else:
-                                log_mask = mask
+                                cls._flip_prefix_bit(log_mask, attr_ord[attr])
                                 attr_struct_dict[attr].pack_into(
                                     log_buff, attr_offset_dict[attr], new_val)
 
@@ -318,6 +309,5 @@ class HighBaseModel(LowBaseModel):
                         entry = logging.UpdateEntry(glob_pnt, old_data, new_data)
                         logging(entry)
 
-                    del log_mask
-                    del log_buff
+                mask.release()
         return update_count

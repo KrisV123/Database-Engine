@@ -32,6 +32,8 @@ D = TypeVar('D')
 
 @dataclass(slots=True, frozen=True)
 class Log_serializer:
+    "Serialize EntryPoints.Entry into bytestream"
+
     entry: EntryPoints.Entry
 
     def serialize(self) -> bytes:
@@ -120,6 +122,7 @@ class Log_serializer:
 
 @dataclass(slots=True)
 class Log_parser:
+    "Deserialize bytes from Log_serializer into Log_data format"
 
     _buffer: bytes | memoryview | mmap.mmap
     pnt: int

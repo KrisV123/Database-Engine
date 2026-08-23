@@ -368,16 +368,15 @@ class Test_flip_prefix_bit:
     @pytest.mark.parametrize(
             "byte_mask, idx, expect_mask",
             [
-                (bytes([0b11111111]), 5, bytes([0b11111011])),
-                (bytes([0b11111111, 0b11111111, 0b11111110]), 23, bytes([0b11111111, 0b11111111, 0b11111111])),
-                (bytes([0b11111111, 0b11111110, 0b11111111]), 15, bytes([0b11111111, 0b11111111, 0b11111111]))
+                (bytearray([0b11111111]), 5, bytearray([0b11111011])),
+                (bytearray([0b11111111, 0b11111111, 0b11111110]), 23, bytearray([0b11111111, 0b11111111, 0b11111111])),
+                (bytearray([0b11111111, 0b11111110, 0b11111111]), 15, bytearray([0b11111111, 0b11111111, 0b11111111]))
             ],
             ids=['default', 'length 3 bytes', 'inside_edge']
     )
-    def test_flip_prefix(self, byte_mask: bytes, idx: int, expect_mask: bytes):
-        mask = bytearray(byte_mask)
-        expec = LowBaseModel._flip_prefix_bit(mask, idx)
-        assert expec == bytearray(expect_mask)
+    def test_flip_prefix(self, byte_mask: bytearray, idx: int, expect_mask: bytearray):
+        LowBaseModel._flip_prefix_bit(byte_mask, idx)
+        assert byte_mask == expect_mask
 
 
 class Test_is_deleted_flag:

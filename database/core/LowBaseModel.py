@@ -24,7 +24,6 @@ class LowBaseModel(metaclass=BaseModelMeta):
 
     @classmethod
     def get_table_schema(cls) -> TableSchema:
-
         """
         cache precompiled model metadata, that returns in TableSchema.
         TableSchema contains ground truth data about model and derived metadata.
@@ -54,7 +53,7 @@ class LowBaseModel(metaclass=BaseModelMeta):
 
     @staticmethod
     def sanitize(bstream: bytes) -> bytes:
-        """wrapper method. Returns bstream withoud leading zero bytes"""
+        "wrapper method. Returns bstream withoud leading zero bytes"
 
         return bstream.rstrip(b'\x00')
 
@@ -68,7 +67,7 @@ class LowBaseModel(metaclass=BaseModelMeta):
         return strg[1:-1] if len(strg) > 1 and strg[0] == "'" and strg[-1] == "'" else strg
 
     def getstate(self) -> bytes:
-        """change instance into bytes"""
+        "change instance into bytes"
 
         table_schema = self.get_table_schema()
         attrs = []
@@ -88,7 +87,7 @@ class LowBaseModel(metaclass=BaseModelMeta):
 
     @classmethod
     def setstate(cls, bstream: bytes) -> LowBaseModel:
-        """change bytes into instance based on struct model from the class"""
+        "change bytes into instance based on struct model from the class"
 
         table_schema = cls.get_table_schema()
         prefix_len = table_schema.mask_len
@@ -119,7 +118,7 @@ class LowBaseModel(metaclass=BaseModelMeta):
 
     @classmethod
     def read_bytes(cls, start: int, end: int) -> bytes:
-        """return bytes from start point to end point"""
+        "return bytes from start point to end point"
 
         table_schema = cls.get_table_schema()
         start_align = (start // cls._os_pg_align) * cls._os_pg_align
@@ -134,7 +133,7 @@ class LowBaseModel(metaclass=BaseModelMeta):
 
     @classmethod
     def _write_bytes(cls, start: int, end: int, txt: bytes) -> None:
-        """write bytes from start point to end point. Not recomended to use"""
+        "write bytes from start point to end point. Not recomended to use"
 
         table_schema = cls.get_table_schema()
         start_align = (start // cls._os_pg_align) * cls._os_pg_align
@@ -149,26 +148,22 @@ class LowBaseModel(metaclass=BaseModelMeta):
 
     @classmethod
     def get_bitmask_prefix(cls, offset: int) -> bytes:
-        """return bytes, that represents offset"""
+        "return bytes, that represents offset"
 
         bit_len = len(cls.get_table_schema().attributes)
         byte_len = ceil(bit_len / 8)
         return cls.read_bytes(offset, offset + byte_len)
 
     @classmethod
-    def _flip_prefix_bit(cls, bitmask: bytearray, attr_ord: int) -> bytearray:
-        """
-        return prefix_mask with flipped bit.
-        Internal method, not meant to be used
-        """
+    def _flip_prefix_bit(cls, bitmask: memoryview | bytearray, attr_ord: int) -> None:
+        "mutate bitmask with flipped bit. Internal method, not meant to be used"
 
         segment, offset = divmod(attr_ord, 8)
         bitmask[segment] ^= (1 << (7 - offset))
-        return bitmask
 
     @classmethod
     def check_none_value(cls, prefix: bytes | bytearray | memoryview, attr: str) -> bool:
-        """checks if parameter have setted null value in prefix"""
+        "checks if parameter have setted null value in prefix"
 
         attr_ord = cls.get_table_schema().attr_ord_dict[attr]
         segment, offset = divmod(attr_ord, 8)
@@ -178,7 +173,7 @@ class LowBaseModel(metaclass=BaseModelMeta):
     def is_deleted_flag(cls, pnt: int, mm: mmap.mmap) -> bool:
         """
         check if bit in tombstone is set to deleted.
-        Pnt is first byte of instance in database
+        Input pnt is first byte of instance in database
         (in database, 1 means is included, 0 means missing)
         """
 
@@ -228,13 +223,12 @@ class LowBaseModel(metaclass=BaseModelMeta):
 
 
     class _EmptySpaceUtils:
-        """helper methods for find_empty_space method"""
+        "helper methods for find_empty_space method"
 
         fst_zero_table = {
             byte: (8 - int((~byte) & 0b11111111).bit_length()) for byte in range(255)
         } | {255: None}
-        """
-        lookup table for position of fisrt zero bit in byte. For 255 is binded None"""
+        "lookup table for position of fisrt zero bit in byte. For 255 is binded None"
 
         def __init__(self, outer: type[LowBaseModel]):
             self._outer = outer
@@ -264,7 +258,7 @@ class LowBaseModel(metaclass=BaseModelMeta):
                            end_segment: int | None) -> tuple[int | None, int | None]:
             """
             subpart of find empty space. Searching edges at the start and the end
-            of find_empty_space smaller then unsigned long long int.
+            of find_empty_space not alligned with unsigned long long int.
             Internal method, no point in using it.
             """
 
@@ -356,7 +350,7 @@ class LowBaseModel(metaclass=BaseModelMeta):
 
     @classmethod
     def read_tombstone(cls) -> bytes:
-        """reads tombstone file"""
+        "reads tombstone file"
 
         table_schema = cls.get_table_schema()
         with open(table_schema.tomb_path, 'rb') as f:
@@ -364,7 +358,7 @@ class LowBaseModel(metaclass=BaseModelMeta):
 
     @classmethod
     def check_structure_sz_consistency(cls, data_size: int, tomb_size: int) -> None:
-        """check consistency in size between data.bin and tombstone.map"""
+        "check consistency in size between data.bin and tombstone.map"
 
         data_inst_count, mod = divmod(data_size, cls.get_table_schema().inst_len)
         if mod != 0:

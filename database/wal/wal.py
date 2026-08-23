@@ -44,13 +44,13 @@ class WAL(EntryPoints):
     """
 
     log_group_size = 50
-    "decides, how many log changes have to be modified to be flushed into disk. Default 50"
+    "decides, how many log changes have to be modified to be flushed into disk. Default 50. Works independently from durability flag"
 
     durability = True
     "dicides, if data should be flushed after every IO write operation. Defalut True"
 
     integrity = False
-    """decides, if will be checked correctness of written data. Default False"""
+    """decides, if correctness of written data will be checked. Default False"""
 
     if durability == False and integrity == True:
         raise Exception('Integrity can not be setted without durability')
@@ -287,7 +287,7 @@ class WAL(EntryPoints):
         return outer_dec
 
     def __call__(self, entry: EntryPoints.UserEntry) -> None:
-        """create and write log into log file based on params"""
+        "create and write log into log file based on params"
 
         filled_entry = self._handle_operator(entry)
         log = Log_serializer(filled_entry).serialize()
@@ -478,12 +478,6 @@ class WAL(EntryPoints):
             log_end_pnt = len(log_f_mv) - offset_tbl_len
             log_pnt = Header_info.header_size
             while log_pnt < log_end_pnt:
-                """
-                data = obj.decode_log(
-                    log_f_mv, log_pnt,
-                    obj.model if not isinstance(obj, type) else model
-                )
-                """
                 data = Log_parser(log_f_mv, log_pnt, inst_len).parse_log()
 
                 if data.applied:

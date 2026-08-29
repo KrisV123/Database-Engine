@@ -116,7 +116,9 @@ def create_model_path(module_name: str) -> Path:
 class BaseModelMeta(type):
 
     def __new__(cls, name: str, bases: tuple[type], namespace: dict[str, Any]):
-        namespace['path'] = create_model_path(namespace['__module__'])
+        namespace.setdefault('path', create_model_path(namespace['__module__']))
+        namespace.setdefault('durability', True)
+        namespace.setdefault('integrity', False)
 
         byte_model = namespace.get('byte_model')
 

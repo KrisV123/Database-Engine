@@ -76,7 +76,9 @@ def model_factory_default_with_params() -> Callable[
                 'Model',
                 ['id', 'name', 'surname', 'birth_date', 'email', 'phone_num'],
                 ('id',),
-                '< I 20s 20s 10s 40s 13s'
+                '< I 20s 20s 10s 40s 13s',
+                True,
+                False
             )
 
         return Model(id, name, surname, birth_date, email, phone_num)
@@ -119,7 +121,9 @@ def model_factory_2byte_mask() -> Callable[
                     'phone_num', 'address', 'city', 'postal_code'
                 ],
                 ('id',),
-                byte_model
+                byte_model,
+                True,
+                False
             )
 
         return Model(id, name, surname, birth_date, email,
@@ -142,7 +146,9 @@ def small_class_factory() -> Callable[[], type]:
                 'Model',
                 ['id', 'name', 'surname'],
                 ('id',),
-                '< I 20s 20s'
+                '< I 20s 20s',
+                True,
+                False
             )
 
         return Model
@@ -173,7 +179,9 @@ def model_factory_2byte_mask_without_params() -> Callable[[], type]:
                     'phone_num', 'address', 'city', 'postal_code'
                 ],
                 ('id',),
-                '< I 20s 20s 10s 40s 13s 40s 20s 6s'
+                '< I 20s 20s 10s 40s 13s 40s 20s 6s',
+                True,
+                False
             )
 
         return Model
@@ -275,7 +283,9 @@ class Test_getstate:
                 'Model',
                 [],
                 (),
-                byte_model
+                byte_model,
+                True,
+                False
             )
 
         return Model()

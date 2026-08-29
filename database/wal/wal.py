@@ -51,15 +51,6 @@ class WAL(EntryPoints):
     log_group_size = 50
     "decides, how many log changes have to be modified to be flushed into disk. Default 50. Works independently from durability flag"
 
-    durability = True
-    "dicides, if data should be flushed after every IO write operation. Defalut True"
-
-    integrity = True
-    """decides, if correctness of written data will be checked. Default False"""
-
-    if durability == False and integrity == True:
-        raise WALError('Integrity can not be setted without durability')
-
     _mmap_align: int = mmap.ALLOCATIONGRANULARITY
 
     __slots__ = (
@@ -94,6 +85,12 @@ class WAL(EntryPoints):
         folder_path.mkdir(exist_ok=True)
         self.log_file_path.touch()
         self.log_f = open(self.log_file_path, 'r+b')
+
+        if table_schema.durability == False and table_schema.integrity == True:
+            raise WAL.WALError('Integrity can not be setted without durability')
+
+        self.durability = table_schema.durability
+        self.integrity = table_schema.integrity
 
     @dualmethod
     def _change_header(obj: WAL | type[WAL],
@@ -396,6 +393,7 @@ class WAL(EntryPoints):
         assert path is not None and model is not None
 
         table_schema = model.get_table_schema()
+        durability, integrity = table_schema.durability, table_schema.integrity
         inst_len = table_schema.inst_len
 
         with ExitStack() as stack:
@@ -410,8 +408,7 @@ class WAL(EntryPoints):
                 raise WAL.WALError('Log file is empty')
 
             utils = _CommitUtils(
-                inst_len, data_f, tomb_f, log_f_mm, obj._mmap_align,
-                obj.durability, obj.integrity
+                inst_len, data_f, tomb_f, log_f_mm, obj._mmap_align, durability, integrity
             )
             offset_tbl_len = obj.get_header(path).offset_tbl_size
 
@@ -437,7 +434,7 @@ class WAL(EntryPoints):
 
             obj._set_log_seg_checksum(log_f_mm, path)
             IOutils._flush_aligned_mmap(
-                log_f_mm, 0, Header_info.header_size, obj._mmap_align, obj.durability)
+                log_f_mm, 0, Header_info.header_size, obj._mmap_align, durability)
 
     @dualmethod
     def get_delta_offset(obj: WAL | type[WAL], path: Path | None=None) -> list[int]:
@@ -581,6 +578,7 @@ class WAL(EntryPoints):
 
         offset_list = obj.get_offsets(path)
         table_schema = model.get_table_schema()
+        durability, integrity = table_schema.durability, table_schema.integrity
 
         with ExitStack() as stack:
             data_path, tomb_path = table_schema.data_path, table_schema.tomb_path
@@ -608,7 +606,7 @@ class WAL(EntryPoints):
             utils = _RollbacUtils(
                 inst_len, data_mm, data_mv, tomb_f,
                 model.path / 'data/meta.json', obj._mmap_align,
-                obj.durability, obj.integrity
+                durability, integrity
             )
 
             for i in range(len(offset_list) - 1, -1, -1):
@@ -632,9 +630,9 @@ class WAL(EntryPoints):
                 apply_log_flag_pnt = offset_list[i] + data.log_length - 1
                 log_mv[apply_log_flag_pnt] = 0
                 IOutils._flush_aligned_mmap(
-                    log_mm, apply_log_flag_pnt, 1, obj._mmap_align, obj.durability)
+                    log_mm, apply_log_flag_pnt, 1, obj._mmap_align, durability)
 
             obj._set_log_seg_checksum(log_mv, path)
             obj._change_header('status', status_consts.ROLLBACKED.value, path)
             IOutils._flush_aligned_mmap(
-                log_mm, 0, Header_info.header_size, obj._mmap_align, obj.durability)
+                log_mm, 0, Header_info.header_size, obj._mmap_align, durability)

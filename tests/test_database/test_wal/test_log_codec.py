@@ -159,7 +159,7 @@ test_inputs: list[tuple[WAL.Entry, bytes, Log_data]] = [
             db_pointer=0,
             log_pnt=0,
             applied=False,
-            log_length=183
+            log_length=317
         )
     )
 ]

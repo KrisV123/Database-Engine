@@ -20,9 +20,11 @@ table_schema = {
     "primary_key": [
         "id"
     ],
-    "byte_model": "< l 20s 20s 10s 40s 13s"
+    "byte_model": "< l 20s 20s 10s 40s 13s",
+    "durability": True,
+    "integrity": False
 }
-encode_table_schema = json.dumps(table_schema).encode('utf-8')
+encode_table_schema = json.dumps(table_schema, indent=4).encode('utf-8')
 
 expect_send_log = [
     Log_data(
@@ -405,6 +407,6 @@ expect_delete_table_log = [
         db_pointer=0,
         log_pnt=100,
         applied=True,
-        log_length=182
+        log_length=316
     )
 ]

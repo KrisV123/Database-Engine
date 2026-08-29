@@ -12,12 +12,7 @@ from database.core.table_schema import TableSchema
 from database.core.meta import BaseModelMeta
 
 class LowBaseModel(metaclass=BaseModelMeta):
-    try:
-        # for POSIX platforms
-        _os_pg_align = os.sysconf("SC_PAGE_SIZE") #type:ignore
-    except:
-        # for Windows platform
-        _os_pg_align = mmap.ALLOCATIONGRANULARITY #type:ignore
+    _os_pg_align: ClassVar[int] = mmap.ALLOCATIONGRANULARITY
 
     path: ClassVar[Path]
     _table_schema: ClassVar[TableSchema | None] = None

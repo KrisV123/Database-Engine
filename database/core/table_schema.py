@@ -33,7 +33,7 @@ def get_byte_model_list(byte_model: str) -> list[str]:
     return type_list
 
 def get_mask_len(byte_model_list: list[str]) -> int:
-    """returns mask size in bytes"""
+    "returns mask size in bytes"
 
     bit_len = len(byte_model_list)
     return ceil(bit_len / 8)
@@ -83,7 +83,10 @@ class TableSchema:
     attributes: list[str]
     primary_key: tuple[str, ...]
     byte_model: str
-    #model_path: str
+
+    # logging parameters
+    durability: bool
+    integrity: bool
 
     # derived data
 
@@ -121,18 +124,23 @@ class TableSchema:
 
     def __setattr__(self, name: Any, value: Any) -> None:
         if hasattr(self, name):
-            raise TableSchemaError('TableSchema is frozen')
+            raise TableSchemaError('TableSchema params are imutable')
         object.__setattr__(self, name, value)
 
     @classmethod
     def init_meta(cls, model: type) -> TableSchema:
-        """creates new meta.json in model's data"""
+        "creates new meta.json in model's data"
+
+        if model.durability == False and model.integrity == True:
+            raise TableSchemaError('Integrity can not be setted without durability')
 
         meta = {
             'model_name': model.__name__,
             'attributes': [name for name in model.__slots__],
             'primary_key': model.primary_key,
             'byte_model': model.byte_model,
+            'durability': model.durability,
+            'integrity': model.integrity
         }
         with open(model.path / 'data/meta.json', 'w') as f:
             dump(meta, f, indent=4)
@@ -141,7 +149,7 @@ class TableSchema:
 
     @classmethod
     def create_table_schema_from_file(cls, model_path: Path) -> TableSchema:
-        """creates model's TableSchema, witch is memory cache of meta.json"""
+        "creates model's TableSchema, witch is memory cache of meta.json"
 
         with open(model_path / 'data/meta.json', 'r') as f:
             meta: dict = load(f)
@@ -152,7 +160,7 @@ class TableSchema:
     def check_table_schema(cls,
                            model: type,
                            model_path: Path) -> TableSchema:
-        """check, if current model's metadata match with model's meta.json"""
+        "check, if current model's metadata match with model's meta.json"
 
         table_schema = cls.create_table_schema_from_file(model_path)
 
@@ -193,6 +201,24 @@ class TableSchema:
                 """
             ))
 
+        if model.durability != table_schema.durability:
+            raise TableSchemaError(dedent(
+                f"""
+                Model's durability don't match with model's durability in TableSchema
+                meta durability:  {table_schema.durability}
+                setup durability: {model.durability}
+                """
+            ))
+
+        if model.integrity != table_schema.integrity:
+            raise TableSchemaError(dedent(
+                f"""
+                Model's integrity don't match with model's integrity in TableSchema
+                meta integrity:  {table_schema.integrity}
+                setup integrity: {model.integrity}
+                """
+            ))
+
         return table_schema
 
     def to_json(self) -> str:
@@ -200,6 +226,8 @@ class TableSchema:
             'model_name': self.model_name,
             'attributes': self.attributes,
             'primary_key': self.primary_key,
-            'byte_model': self.byte_model
+            'byte_model': self.byte_model,
+            'durability': self.durability,
+            'integrity': self.integrity
         }
-        return dumps(data)
+        return dumps(data, indent=4)

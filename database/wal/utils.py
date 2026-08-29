@@ -63,8 +63,12 @@ class _CommitUtils:
     durability: bool
     integrity: bool
 
-    coruption_error: ClassVar[OSError] = OSError('coruption occured while writing instance')
-    missing_data_error: ClassVar[ValueError] = ValueError("log doesn't have any data to apply")
+    class CommitError(Exception):
+        pass
+
+
+    coruption_error: ClassVar[CommitError] = CommitError('coruption occured while writing instance')
+    missing_data_error: ClassVar[CommitError] = CommitError("log doesn't have any data to apply")
 
     def set_log_to_applyed(self, log_pnt: int, data: Log_data) -> None:
         apply_pnt = log_pnt + data.log_length - 1
@@ -199,8 +203,12 @@ class _RollbacUtils:
     durability: bool
     integrity: bool
 
-    coruption_error: ClassVar[OSError] = OSError('coruption occured while writing rollback data')
-    missing_data_error: ClassVar[ValueError] = ValueError("log doesn't have any data to apply")
+    class RollbackError(Exception):
+        pass
+
+
+    coruption_error: ClassVar[RollbackError] = RollbackError('coruption occured while writing rollback data')
+    missing_data_error: ClassVar[RollbackError] = RollbackError("log doesn't have any data to apply")
 
     def rollback_send_log(self, glob_pnt: int, data: Log_data) -> None:
         "rollback SEND log from database"

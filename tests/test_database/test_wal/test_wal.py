@@ -12,18 +12,17 @@ import json
 from io import BufferedRandom
 from contextvars import Token
 from collections.abc import Generator, Callable
-from zlib import crc32
 from pathlib import Path
 
 from database.wal.wal import WAL, _LOG_INST, Header_info
 from tests.test_database.test_model.test import Test
-from database.varint import VarInt
 from database.core.row import RowList
 from database.core.table import Table
+
+from database.wal.log_finalizer import LogFinalizerError
 import tests.test_database.expect_logs as expect_logs
 
-from database.wal.wal_types import Operator
-from database.wal.log_codec import Log_serializer, Log_parser, Log_data
+from database.wal.log_codec import Log_data
 
 class Test_WAL:
     trans_name = 'log_specially_made_for_testing'
@@ -128,7 +127,7 @@ class Test_WAL:
                 assert memory_header.offset_tbl_checksum == chceksum
 
             clean_db()
-    
+
         def test_change_header_get_header_cls(self, clean_db: Callable[[], None]):
             clean_db()
             status = b'\x08'
@@ -163,12 +162,12 @@ class Test_WAL:
             b_offset_tbl_size = (offset_tbl_size).to_bytes(9, 'little', signed=False)
             b_model_name = ('a' * 41).encode('utf-8')
 
-            with pytest.raises((ValueError, RuntimeError)):
+            with pytest.raises(LogFinalizerError):
                 with WAL(Test, 'testing') as log_inst:
                     log_inst._change_header('offset_tbl_size', b_offset_tbl_size)
             clean_db()
 
-            with pytest.raises((ValueError, RuntimeError)):
+            with pytest.raises(LogFinalizerError):
                 with WAL(Test, 'testing') as log_inst:
                     log_inst._change_header('model_name', b_model_name)
             clean_db()
@@ -181,7 +180,7 @@ class Test_WAL:
         def test_change_header_attr_dont_exist_error(self, clean_db: Callable[[], None]):
             clean_db()
 
-            with pytest.raises((AttributeError, RuntimeError)):
+            with pytest.raises(LogFinalizerError):
                 with WAL(Test, 'testing') as log_inst:
                     log_inst._change_header('adadawda', b'\x00')
             clean_db()
@@ -194,13 +193,13 @@ class Test_WAL:
         
         def test_change_header_missing_path(self, clean_db):
             clean_db()
-            with pytest.raises((AttributeError, RuntimeError)):
+            with pytest.raises(WAL.WALError):
                 WAL._change_header('awdawd', b'\x00')
             clean_db()
         
         def test_get_header_missing_path(self, clean_db):
             clean_db()
-            with pytest.raises((AttributeError, RuntimeError)):
+            with pytest.raises(WAL.WALError):
                 WAL.get_header()
             clean_db()
 
@@ -614,7 +613,6 @@ class Test_WAL:
                 log_path = log_inst.log_file_path
                 for i in range(10):
                     Test(i, 'Janko', 'Hrasko').send()
-            expect_table = Test.set()
 
             Test.delete_table()
             assert len(Test.set()) == 0
@@ -759,7 +757,7 @@ class Test_WAL:
                 log.write(b'\x00')          
             report = WAL.check_consistency(Test, log_path)
 
-            assert report.status == b'\x02'
+            assert report.status == Header_info.Status_consts.APPLIED
             assert len(report.not_applied_list) == 2
             assert report.corrupt_logs == True
             assert report.corrupt_offsets == False
@@ -775,7 +773,7 @@ class Test_WAL:
                 log.write(b'\x01')
             report = WAL.check_consistency(Test, log_path)
 
-            assert report.status == b'\x01'
+            assert report.status == Header_info.Status_consts.APPLYING
             assert len(report.not_applied_list) == 0
             assert report.corrupt_logs == False
             assert report.corrupt_offsets == False
@@ -792,7 +790,7 @@ class Test_WAL:
                 log.write(b'\x59')
             report = WAL.check_consistency(Test, log_path)
 
-            assert report.status == b'\x02'
+            assert report.status == Header_info.Status_consts.APPLIED
             assert len(report.not_applied_list) == 0
             assert report.corrupt_logs == False
             assert report.corrupt_offsets == True
@@ -809,7 +807,7 @@ class Test_WAL:
                 log.write(b'f' * 300)
             report = WAL.check_consistency(Test, log_path)
 
-            assert report.status == b'\x02'
+            assert report.status == Header_info.Status_consts.APPLIED
             assert len(report.not_applied_list) == 0
             assert report.corrupt_logs == True
             assert report.corrupt_offsets == False
@@ -824,7 +822,7 @@ class Test_WAL:
             WAL.rollback(Test, log_path)
             report = WAL.check_consistency(Test, log_path)
 
-            assert report.status == b'\x04'
+            assert report.status == Header_info.Status_consts.ROLLBACKED
             assert len(report.not_applied_list) == 10
             assert report.corrupt_logs == False
             assert report.corrupt_offsets == False
@@ -838,7 +836,7 @@ class Test_WAL:
             log_path = setup_db_with_wal()
             report = WAL.check_consistency(Test, log_path)
 
-            assert report.status == b'\x02'
+            assert report.status == Header_info.Status_consts.APPLIED
             assert len(report.not_applied_list) == 0
             assert report.corrupt_logs == False
             assert report.corrupt_offsets == False

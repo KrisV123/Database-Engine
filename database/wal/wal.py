@@ -24,6 +24,7 @@ from database.wal.utils import _RollbacUtils, _CommitUtils, IOutils
 from database.wal.wal_format import Field, Header_info, Header, Log_file_struct
 from database.wal.wal_types import EntryPoints, Operator
 from database.wal.log_codec import Log_serializer, Log_parser, Log_data
+from database.wal.log_finalizer import LogFinalizer
 
 _LOG_INST: ContextVar[WAL | None] = ContextVar('log_inst', default=None)
 
@@ -43,17 +44,21 @@ class WAL(EntryPoints):
     will be created, if does not exist.
     """
 
+    class WALError(Exception):
+        pass
+
+
     log_group_size = 50
     "decides, how many log changes have to be modified to be flushed into disk. Default 50. Works independently from durability flag"
 
     durability = True
     "dicides, if data should be flushed after every IO write operation. Defalut True"
 
-    integrity = False
+    integrity = True
     """decides, if correctness of written data will be checked. Default False"""
 
     if durability == False and integrity == True:
-        raise Exception('Integrity can not be setted without durability')
+        raise WALError('Integrity can not be setted without durability')
 
     _mmap_align: int = mmap.ALLOCATIONGRANULARITY
 
@@ -88,13 +93,13 @@ class WAL(EntryPoints):
 
         folder_path.mkdir(exist_ok=True)
         self.log_file_path.touch()
-        self.log_f = open(self.log_file_path, 'a+b')
+        self.log_f = open(self.log_file_path, 'r+b')
 
     @dualmethod
     def _change_header(obj: WAL | type[WAL],
                        attr: str,
                        data: bytes,
-                       path: str | Path | None=None) -> None:
+                       path: Path | None=None) -> None:
         """
         method, that rewrite header data based on attr inside a document.
         Can be casted on WAL object and WAL class. With object,
@@ -103,15 +108,15 @@ class WAL(EntryPoints):
         """
 
         if isinstance(obj, type) and path is None:
-            raise AttributeError("with class, path needs to be provided")
+            raise WAL.WALError("with class, path needs to be provided")
 
         field: Field = getattr(Header_info, attr)
         if field.length < len(data):
-            raise ValueError("trying to write data to header larger then segment size")
+            raise WAL.WALError("trying to write data to header larger then segment size")
+        data_len, field_len = len(data), field.length
+        disk_data = data + b'\x00' * (field_len - data_len) if data_len < field_len else data
 
         if isinstance(obj, WAL):
-            path = obj.log_file_path
-
             match attr:
                 case 'status':
                     mem_data = data
@@ -119,21 +124,21 @@ class WAL(EntryPoints):
                     mem_data = int.from_bytes(data, 'little', signed=False)
                 case 'model_name':
                     mem_data = data.decode('utf-8')
-                case _:
-                    raise ValueError('attribute does not exist')
+                case undefined:
+                    raise WAL.WALError(f'attribute {undefined} does not exist')
             setattr(obj.log_file_struct.header, attr, mem_data)
-
-        assert path is not None
-
-        with open(path, 'r+b') as f:
-            if len(data) < field.length:
-                data += b'\x00' * (field.length - len(data))
-            f.seek(field.offset)
-            f.write(data)
-            IOutils._flush_buffered(f, obj.durability)
+            obj.log_f.seek(field.offset)
+            obj.log_f.write(disk_data)
+            IOutils._flush_buffered(obj.log_f, obj.durability)
+        else:
+            assert path is not None
+            with open(path, 'r+b') as f:
+                f.seek(field.offset)
+                f.write(disk_data)
+                IOutils._flush_buffered(f, True)
 
     @dualmethod
-    def get_header(obj: WAL | type[WAL], path: Path | str | None=None) -> Header:
+    def get_header(obj: WAL | type[WAL], path: Path | None=None) -> Header:
         """
         method, that returns Header dataclass object with filled attributes.
         Can be casted on WAL object and WAL class. With object, it will read
@@ -145,16 +150,15 @@ class WAL(EntryPoints):
             return obj.log_file_struct.header
         else:
             if path is None:
-                raise AttributeError("with class, path needs to be provided")
+                raise WAL.WALError("with class, path needs to be provided")
         assert path is not None
 
         status, offset_tbl_size, model_name = b'', 0, ''
         logs_checksum, offset_tbl_checksum = 0, 0
-        header_info_cls = Header_info
 
         with open(path, 'rb') as f:
             for attr in Header.__slots__:
-                field: Field = getattr(header_info_cls, attr)
+                field: Field = getattr(Header_info, attr)
                 f.seek(field.offset)
                 data = f.read(field.length)
                 match attr:
@@ -163,20 +167,20 @@ class WAL(EntryPoints):
                     case 'offset_tbl_size':
                         offset_tbl_size = int.from_bytes(data, 'little', signed=False)
                     case 'model_name':
-                        model_name = data.strip(b'\x00').decode('utf-8')
+                        model_name = data.rstrip(b'\x00').decode('utf-8')
                     case 'logs_checksum':
                         logs_checksum = int.from_bytes(data, 'little', signed=False)
                     case 'offset_tbl_checksum':
                         offset_tbl_checksum = int.from_bytes(data, 'little', signed=False)
-                    case _:
-                        raise AttributeError('attribute does not exist')
+                    case undefined:
+                        raise WAL.WALError(f'attribute {undefined} does not exist')
         return Header(
             status, offset_tbl_size, model_name, logs_checksum, offset_tbl_checksum)
 
     @dualmethod
     def _set_log_seg_checksum(obj: WAL | type[WAL],
                               log_file_buff: bytes | memoryview | mmap.mmap,
-                              path: str | Path | None=None) -> int:
+                              path: Path | None=None) -> int:
         """
         calculate and set log_checksum to the header of current data.
         Also returns new checksum. Function is not atomic, data have to be flushed.
@@ -192,12 +196,8 @@ class WAL(EntryPoints):
         return logs_hash
 
     def __enter__(self) -> WAL:
-        try:
-            self.log_f.write(b'\x00' * Header_info.header_size)
-            IOutils._flush_buffered(self.log_f, self.durability)
-        except:
-            raise RuntimeError('something went wrong while initializing log file')
-
+        self.log_f.write(b'\x00' * Header_info.header_size)
+        IOutils._flush_buffered(self.log_f, self.durability)
         self._old = _LOG_INST.set(self)
         return self
 
@@ -205,68 +205,14 @@ class WAL(EntryPoints):
                  exc_type: type[BaseException] | None,
                  exc_val: BaseException | None,
                  _: TracebackType | None) -> None:
+        exit_utils = LogFinalizer(self, exc_val)
         try:
             if exc_type:
-                if not self.log_f.closed:
-                    self.log_f.close()
-                if self.log_file_path.exists():
-                    self.log_file_path.unlink()
-                raise RuntimeError(
-                    "Error occured during creating log file. Log document is deleted."
-                ) from exc_val
-
-            try:
-                self.log_file_struct.flush_logs(self.log_f)
-
-                size = self.log_f.tell()
-                self.log_f.seek(Header_info.header_size)
-                logs_checksum = crc32(self.log_f.read(size - Header_info.header_size))
-
-                self.log_f.write(self.log_file_struct.delta_offset_table)
-                offset_tbl_checksum = crc32(self.log_file_struct.delta_offset_table)
-
-                IOutils._flush_buffered(self.log_f, self.durability)
-                self.log_f.close()
-
-                self._change_header(
-                    'logs_checksum',
-                    logs_checksum.to_bytes(4, 'little', signed=False)
-                )
-                self._change_header(
-                    'offset_tbl_checksum',
-                    offset_tbl_checksum.to_bytes(4, 'little',signed=False)
-                )
-
-                offset_tbl_len = len(self.log_file_struct.delta_offset_table)
-                self._change_header(
-                    'offset_tbl_size',
-                    offset_tbl_len.to_bytes(8, 'little', signed=False)
-                )
-                self._change_header('status', Header_info.status_consts['APPLYING'])
-
-            except Exception as e:
-                if not self.log_f.closed:
-                    self.log_f.close()
-                self.log_file_path.unlink()
-                raise RuntimeError(
-                    "Error occured during finalizing log file. Log document is deleted"
-                ) from e
-
-            try:
-                self.commit()
-                self._change_header('status', Header_info.status_consts['APPLIED'])
-
-            except Exception as e:
-                try:
-                    self.rollback()
-                except Exception as e:
-                    raise RuntimeError(
-                        "FATAL ERROR: Error occured during rollbacking failed commit faze"
-                    ) from e
-                raise RuntimeError(
-                    "Error occured during applying logs into the database. Applied logs were rollbacked"
-                ) from e
+                exit_utils.handle_exc_exit()
+            exit_utils.finalize_log()
+            exit_utils.apply_log()
         finally:
+            self.log_f.close()
             _LOG_INST.reset(self._old)
 
     @classmethod
@@ -391,9 +337,6 @@ class WAL(EntryPoints):
                 return None
 
             offset_tbl_len = cls.get_header(path).offset_tbl_size
-            if offset_tbl_len is None:
-                raise ValueError('size of offset table was never set')
-
             if not corrupt:
                 log_end_pnt = len(mv) - offset_tbl_len
 
@@ -428,10 +371,7 @@ class WAL(EntryPoints):
                 else:
                     print(log)
         finally:
-            try:
-                iter_logs.close()
-            except Exception:
-                raise
+            iter_logs.close()
 
     @dualmethod
     def commit(obj: WAL | type[WAL],
@@ -447,12 +387,12 @@ class WAL(EntryPoints):
 
         if isinstance(obj, WAL):
             if path is not None:
-                raise AttributeError("with object, path should not be provided")
+                raise WAL.WALError("with object, path should not be provided")
             model = obj.model
             path = obj.log_file_path
         else:
             if path is None:
-                raise AttributeError("with class, path needs to be provided")
+                raise WAL.WALError("with class, path needs to be provided")
         assert path is not None and model is not None
 
         table_schema = model.get_table_schema()
@@ -461,13 +401,13 @@ class WAL(EntryPoints):
         with ExitStack() as stack:
             data_f = stack.enter_context(open(table_schema.data_path, 'r+b', buffering=0))
             tomb_f = stack.enter_context(open(table_schema.tomb_path, 'r+b', buffering=0))
-            log_f = stack.enter_context(open(path, 'r+b'))
+            log_f = obj.log_f if isinstance(obj, WAL) else stack.enter_context(open(path, 'r+b'))
             if path.stat().st_size != 0:
                 log_f_mm = stack.enter_context(
                         mmap.mmap(log_f.fileno(), 0, access=mmap.ACCESS_WRITE))
                 log_f_mv = stack.enter_context(memoryview(log_f_mm))
             else:
-                return
+                raise WAL.WALError('Log file is empty')
 
             utils = _CommitUtils(
                 inst_len, data_f, tomb_f, log_f_mm, obj._mmap_align,
@@ -512,7 +452,6 @@ class WAL(EntryPoints):
 
             with ExitStack() as stack:
                 f = stack.enter_context(open(path, 'rb'))
-
                 start_align = (start_pnt // obj._mmap_align) * obj._mmap_align
                 mm = stack.enter_context(
                     mmap.mmap(f.fileno(),
@@ -543,7 +482,7 @@ class WAL(EntryPoints):
 
     @dataclass
     class Log_file_report:
-        status: bytes
+        status: Header_info.Status_consts
         not_applied_list: list[Log_data]
         unreadable_logs_pnt: list[int]
         corrupt_logs: bool
@@ -558,9 +497,9 @@ class WAL(EntryPoints):
         Returns Log_file_report dataclass with data about consistency
         """
 
-        status_consts = Header_info.status_consts
+        status_consts = Header_info.Status_consts
         header = cls.get_header(path)
-        status = header.status
+        status = status_consts(header.status)
         offset_tbl_size = header.offset_tbl_size
         inst_len = model.get_table_schema().inst_len
 
@@ -572,7 +511,7 @@ class WAL(EntryPoints):
                 log_mm = stack.enter_context(mmap.mmap(log_f.fileno(), 0, access=mmap.ACCESS_READ))
                 log_mv = stack.enter_context(memoryview(log_mm))
             else:
-                raise OSError("log file is empty")
+                raise WAL.WALError(f"log file is empty")
 
             logs_count = 0
             header_size = Header_info.header_size
@@ -615,8 +554,8 @@ class WAL(EntryPoints):
                 report.corrupt_offsets = True
                 report.consistent = False
 
-        if not ((status == status_consts['APPLIED'] and len(report.not_applied_list) == 0) or
-                (status == status_consts['ROLLBACKED'] and len(report.not_applied_list) == logs_count)):
+        if not ((status == status_consts.APPLIED and len(report.not_applied_list) == 0) or
+                (status == status_consts.ROLLBACKED and len(report.not_applied_list) == logs_count)):
             report.consistent = False
 
         return report
@@ -629,16 +568,16 @@ class WAL(EntryPoints):
 
         if isinstance(obj, WAL):
             if path is not None:
-                raise AttributeError("with object, path should not be provided")
+                raise WAL.WALError("with object, path should not be provided")
             model = obj.model
             path = obj.log_file_path
         else:
             if path is None:
-                raise AttributeError("with class, path needs to be provided")
+                raise WAL.WALError("with class, path needs to be provided")
         assert model is not None and path is not None
 
-        status_consts = Header_info.status_consts
-        obj._change_header('status', status_consts['ROLLBACKING'], path)
+        status_consts = Header_info.Status_consts
+        obj._change_header('status', status_consts.ROLLBACKING.value, path)
 
         offset_list = obj.get_offsets(path)
         table_schema = model.get_table_schema()
@@ -652,7 +591,7 @@ class WAL(EntryPoints):
             if log_len == 0:
                 return
 
-            log_f = stack.enter_context(open(path, 'r+b'))
+            log_f = obj.log_f if isinstance(obj, WAL) else stack.enter_context(open(path, 'r+b'))
             log_mm = stack.enter_context(
                 mmap.mmap(log_f.fileno(), 0, access=mmap.ACCESS_WRITE))
             log_mv = stack.enter_context(memoryview(log_mm))
@@ -664,7 +603,7 @@ class WAL(EntryPoints):
                 data_mv = stack.enter_context(memoryview(data_mm))
                 tomb_f = stack.enter_context(open(tomb_path, 'r+b', buffering=0))
             else:
-                raise OSError(f"database or log file is empty, log_length: {log_len}, database_length: {data_len}")
+                raise WAL.WALError(f"database or log file is empty, log_length: {log_len}, database_length: {data_len}")
 
             utils = _RollbacUtils(
                 inst_len, data_mm, data_mv, tomb_f,
@@ -696,6 +635,6 @@ class WAL(EntryPoints):
                     log_mm, apply_log_flag_pnt, 1, obj._mmap_align, obj.durability)
 
             obj._set_log_seg_checksum(log_mv, path)
-            obj._change_header('status', status_consts['ROLLBACKED'], path)
+            obj._change_header('status', status_consts.ROLLBACKED.value, path)
             IOutils._flush_aligned_mmap(
                 log_mm, 0, Header_info.header_size, obj._mmap_align, obj.durability)

@@ -3,6 +3,7 @@ from __future__ import annotations
 from dataclasses import dataclass, field
 from io import BufferedRandom
 from database.wal.utils import IOutils
+from enum import Enum
 
 @dataclass(frozen=True, slots=True)
 class Field:
@@ -16,7 +17,6 @@ class Header_info:
     All params are in bytes
     """
 
-    header_size = 100
     status = Field(0, 1)
     offset_tbl_size = Field(1, 8)
 
@@ -28,13 +28,14 @@ class Header_info:
     model_name = Field(10, 40)
     logs_checksum = Field(50, 4)
     offset_tbl_checksum = Field(54, 4)
-    status_consts = {
-        'INIT': b'\x00',        # initialized, creating logs
-        'APPLYING': b'\x01',    # all logs created, applying to db (consistent log file, logging process not)
-        'APPLIED': b'\x02',     # all logs applied, finished (consistent state)
-        'ROLLBACKING': b'\x03', # rollbacking in process
-        'ROLLBACKED': b'\x04'   # finished rollbacking (consistent state)
-    }
+
+    header_size = 100
+    class Status_consts(Enum):
+        INIT = b'\x00'        # initialized, creating logs
+        APPLYING = b'\x01'    # all logs created, applying to db (consistent log file, logging process not)
+        APPLIED = b'\x02'     # all logs applied, finished (consistent state)
+        ROLLBACKING = b'\x03' # rollbacking in process
+        ROLLBACKED = b'\x04'  # finished rollbacking (consistent state)
 
 
 @dataclass(slots=True)
@@ -101,6 +102,7 @@ class Log_file_struct:
     """
 
     def flush_logs(self, log_f: BufferedRandom):
+        log_f.seek(0, 2)
         log_f.write(b''.join(self.log_segment))
         IOutils._flush_buffered(log_f)
         self.log_segment = []

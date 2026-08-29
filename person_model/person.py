@@ -4,9 +4,7 @@ from typing import ClassVar, Annotated
 from pprint import pprint
 
 from database.core.HighBaseModel import HighBaseModel
-from database.core.meta import BaseModelMeta
 from database.wal.wal import WAL
-from database.core.table_schema import TableSchema
 
 @dataclass(slots=True)
 class Model(HighBaseModel):
@@ -18,10 +16,8 @@ class Model(HighBaseModel):
     vyska: Annotated[float, "float"] | None
     ma_vodicak: bool | None
 
-    # key or superkey
+    # primary key
     primary_key: ClassVar[tuple[str, ...]] = ('id',)
-    #byte_model: ClassVar[str] = '< I 20s 20s 20s f ? I'
-    #path: ClassVar[Path] = Path(__file__).parent
 
 
 def setup_table() -> None:
@@ -58,7 +54,6 @@ def combined_tracked_transaction() -> None:
         new_line.send()
 
         Model.delete('2 < id < 8')
-
         Model.update('id < 100', krsne="'Adam'")
 
         Model.delete_table()
@@ -82,22 +77,6 @@ if __name__ == '__main__':
     #print(Model.get_byte_model_list())
     #print(Model.get_endianness_symbol())
 
-    import time
-
-    for i in range(1000):
-        Model(i, 'Kristian', 'Vesely', '20.01.2001', 187.5, True).send()
-
-    start = time.time()
-
-    for i in range(10000):
-        Model.delete(f'id == {i}')
-        #Model.update(f"id == {i}", krsne="'Andrej'")
-
-    end = time.time()
-
-    print(end - start)
-    Model.delete_table()
-
     """
     Model.delete_table()
 
@@ -111,17 +90,14 @@ if __name__ == '__main__':
     Model.delete_table()
     """
 
-    #Model.delete_table()
-
-    """
+    Model.delete_table()
     Model.delete_table()
     setup_table()
     combined_tracked_transaction()
     pprint(Model.set())
     Model.delete_table()
-    """
 
-    #WAL.rollback(Model, 'database/person_model/data/wal_logs/testing_26-08-12_19-20-179990.log')
+    #WAL.rollback(Model, Path('person_model/data/wal_logs/testing_26-08-26_22-44-359215.log'))
     #pprint(Model.set())
 
     """

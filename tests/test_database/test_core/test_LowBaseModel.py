@@ -492,7 +492,8 @@ class Test_find_empty_space:
                                           setup_tomb: Callable[[bytes], None],
                                           clean_tomb: Callable[[], None]):
         setup_tomb(bytes)
-        assert Test.find_empty_space() == expect_pnt
+        found_pnt = Test.find_empty_space()
+        assert found_pnt == expect_pnt
         clean_tomb()
 
     @pytest.fixture
@@ -515,9 +516,11 @@ class Test_find_empty_space:
 
     @pytest.mark.parametrize(
             "pnt, expect_pnt",
-            [(0, 1512), (756, 1512), (1080, 1512), (1404, 1512), (1512, 1944),
+            [
+                (0, 1512), (756, 1512), (1080, 1512), (1404, 1512), (1512, 1944),
                 (1620, 1944), (1728, 1944), (1836, 1944), (1944, 5832), (6804, 6912),
-                (6912, 8424), (8532, 10800)]
+                (6912, 8424), (8532, 10800)
+            ]
     )
     def test_find_empty_space_with_idx(self,
                                        pnt: int, expect_pnt: int,
@@ -525,7 +528,8 @@ class Test_find_empty_space:
                                        setup_tomb: Callable[[bytes], None],
                                        clean_tomb: Callable[[], None]):
         setup_tomb(bytes_preset)
-        assert Test.find_empty_space(start_pnt=pnt) == expect_pnt
+        found_pnt = Test.find_empty_space(start_pnt=pnt)
+        assert found_pnt == expect_pnt
         clean_tomb()
 
     @pytest.fixture
@@ -566,7 +570,8 @@ class Test_find_empty_space:
                                              setup_tomb: Callable[[bytes], None],
                                              clean_tomb: Callable[[], None]):
         setup_tomb(bytes_preset_2)
-        assert Test.find_empty_space(start_pnt=pnt) == expect_pnt
+        found_pnt = Test.find_empty_space(start_pnt=pnt)
+        assert found_pnt == expect_pnt
         clean_tomb()
     
     def test_find_empty_space_all_positions(self,
@@ -582,5 +587,6 @@ class Test_find_empty_space:
             ])
             setup_tomb(data)
             for i in range(pos):
-                assert Test.find_empty_space(start_pnt=i * inst_len) == pos * inst_len
+                found_pnt = Test.find_empty_space(start_pnt=i * inst_len)
+                assert found_pnt == pos * inst_len
             clean_tomb()

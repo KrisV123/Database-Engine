@@ -261,9 +261,7 @@ class WAL(EntryPoints):
                     old_data = self.model.read_bytes(
                         start_pnt, start_pnt + table_schema.inst_len
                     )
-                    new_empty_space = self.model.find_empty_space(
-                        start_pnt=self.empty_space_pnt
-                    )
+                    new_empty_space = self.model.find_empty_space(self.empty_space_pnt)
                     if (new_empty_space is None or
                         new_empty_space == self.db_size):
                         self.db_full = True

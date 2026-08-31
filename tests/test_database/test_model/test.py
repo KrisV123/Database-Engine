@@ -53,6 +53,28 @@ def test():
     Test.delete("name != 'Kristian'")
     Test.delete_table()
 
+def test_2():
+    for i in range(100_000):
+        model = Test(
+            i,
+            'Kristian',
+            'Vesely',
+            '20.01.2001',
+            'kris.v@gmail.com',
+            None
+        )
+        model.send()
+
 if __name__ == '__main__':
-    #print(timeit.timeit(test, number=100))
-    pprint(Test.get_table_schema())
+    print('IBA REGEX, lepsie re hladanie')
+    times = []
+    for i in range(10):
+        time = timeit.timeit(test_2, number=1)
+        times.append(time)
+        print(time)
+        Test.delete_table()
+    priemer = sum(times) / len(times)
+    print()
+    print('PRIEMER:', priemer)
+    #Test.delete_table()
+    #pprint(Test.get_table_schema())

@@ -1,8 +1,8 @@
 from __future__ import annotations
 import mmap
+import re
 from pathlib import Path
 from math import ceil
-from functools import cache
 from contextlib import ExitStack
 from typing import Any, TypeVar, ClassVar
 
@@ -216,24 +216,19 @@ class LowBaseModel(metaclass=BaseModelMeta):
                             offset = align_offset) as mm):
                 mm[rel_segment] |= (1 << (7 - offset))
 
-
     class _EmptySpaceUtils:
         "helper methods for find_empty_space method"
 
-        fst_zero_table = {
-            byte: (8 - int((~byte) & 0b11111111).bit_length()) for byte in range(255)
-        } | {255: None}
-        "lookup table for position of fisrt zero bit in byte. For 255 is binded None"
+        fst_zero_tuple = tuple(
+            None if byte == 256 else 8 - int((~byte) & 0b11111111).bit_length()
+            for byte in range(256)
+        )
+        "lookup tuple for position of first zero bit in byte. For 255 is binded None"
+
+        search_re = re.compile(rb'[^\xff]')
 
         def __init__(self, outer: type[LowBaseModel]):
             self._outer = outer
-
-        @cache
-        def byte_256_error(self) -> ValueError:
-            return ValueError(
-                """offset is None, what should be impossible
-                (fst_zero_table returned 255 byte, which don't have zero)"""
-            )
 
         def pos_constructor(self, segment: int | None, offset: int | None) -> int | None:
             """
@@ -246,100 +241,54 @@ class LowBaseModel(metaclass=BaseModelMeta):
             else:
                 return None
 
-        def smaller_blocks(self,
-                           mv: memoryview,
-                           begin_segment: int,
-                           begin_offset: int,
-                           end_segment: int | None) -> tuple[int | None, int | None]:
-            """
-            subpart of find empty space. Searching edges at the start and the end
-            of find_empty_space not alligned with unsigned long long int.
-            Internal method, no point in using it.
-            """
-
-            segment: int | None = None
-            offset: int | None = None
-            for idx, byte in enumerate(mv[begin_segment:end_segment]):
-                if byte == 0b11111111:
-                    continue
-                if idx == 0:
-                    skip_mask = ((1 << begin_offset) - 1) << (8 - begin_offset)
-                    byte |= skip_mask
-                    if byte == 0b11111111:
-                        continue
-                offset = self.fst_zero_table[byte]
-                if offset is None:
-                    raise self.byte_256_error()
-                segment = begin_segment + idx
-                break
-            return (segment, offset)
 
     @classmethod
     def find_empty_space(cls, start_pnt: int | None=None) -> int | None:
         """
         Tries to find empty space. Return position in data.bin.
-        If it doesn't find any empty space, returns None. Values for
-        offset can be precalculated using precalc_table=True.
-        It is also a default value. If start_pnt is set, function
-        try to find next empty space to this pointer. start_pnt
+        If it doesn't find any empty space, returns None. If start_pnt is set,
+        function try to find next empty space after this pointer. start_pnt
         value is pointer to the data.bin file. Default pnt is None.
         """
 
         table_schema = cls.get_table_schema()
-        utils = cls._EmptySpaceUtils(cls)
-        inst_len = cls.get_table_schema().inst_len
+        tomb_path = table_schema.tomb_path
+        inst_len = table_schema.inst_len
+
         if start_pnt is not None and start_pnt % inst_len != 0:
             raise ValueError("start_pointer is not aligned with the instances")
+        if tomb_path.stat().st_size == 0:
+            return None
 
+        utils = cls._EmptySpaceUtils(cls)
         with ExitStack() as stack:
-            tomb_path = table_schema.tomb_path
             f = stack.enter_context(open(tomb_path, 'rb'))
-
-            if tomb_path.stat().st_size == 0:
-                return None
-
             mm = stack.enter_context(mmap.mmap(f.fileno(), 0, access=mmap.ACCESS_READ))
-            mv = stack.enter_context(memoryview(mm))
 
-            segment: int | None = None
-            offset: int | None = None
-
-            if start_pnt is not None:
-                start_pnt += inst_len
-            start_pnt = start_pnt // inst_len if start_pnt is not None else 0
-            begin_segment = start_pnt // 8 if start_pnt is not None else 0
-            begin_offset = start_pnt % 8 if start_pnt is not None else 0
-            if len(mv) < 8:
-                fst_q_align = len(mv)
+            if start_pnt is None:
+                byte_offset, bit_offset = 0, 0
             else:
-                fst_q_align = min((begin_segment >> 3) * 8 + 8, (len(mv) >> 3) * 8)
-            segment, offset = utils.smaller_blocks(
-                mv, begin_segment, begin_offset, fst_q_align)
+                inst_idx = start_pnt // inst_len + 1
+                byte_offset, bit_offset = inst_idx // 8, inst_idx % 8
 
-            q_align_start = fst_q_align if start_pnt is not None else 0
-            q_align_end = (len(mv) >> 8) * 8
+            segment, offset = None, None
 
-            if segment is not None:
-                return utils.pos_constructor(segment, offset)
-
-            # searching whole long long ints
-            for int_cycle, long in enumerate(mv[q_align_start:q_align_end].cast('Q')):
-                if long == 0xFFFFFFFFFFFFFFFF:
-                    continue
-                base = q_align_start + int_cycle * 8
-                long_len = (~long & 0xFFFFFFFFFFFFFFFF).bit_length()
-                rel_segment = long_len // 8
-                offset = 8 - long_len % 8
-                segment = base + rel_segment
-                break
-
-            if segment is not None:
-                return utils.pos_constructor(segment, offset)
-
-            tail_start = max(q_align_end, begin_segment)
-
-            segment, offset = utils.smaller_blocks(
-                mv, tail_start, begin_offset, None)
+            if bit_offset:
+                mask = (0xff << (8 - bit_offset)) & 0xff
+                mask_val = mm[byte_offset] | mask
+                if mask_val != 0xff:
+                    segment = byte_offset
+                    offset = utils.fst_zero_tuple[mask_val]
+                else:
+                    match = utils.search_re.search(mm, byte_offset + 1)
+                    if match:
+                        segment = match.start()
+                        offset = utils.fst_zero_tuple[mm[segment]]
+            else:
+                match = utils.search_re.search(mm, byte_offset)
+                if match:
+                    segment = match.start()
+                    offset = utils.fst_zero_tuple[mm[segment]]
 
         return utils.pos_constructor(segment, offset)
 

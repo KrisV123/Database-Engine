@@ -56,43 +56,27 @@ class HighBaseModel(LowBaseModel):
         with ExitStack() as stack:
             data_path = table_schema.data_path
             tomb_path = table_schema.tomb_path
-
             data_size = data_path.stat().st_size
             tomb_size = tomb_path.stat().st_size
             cls.check_structure_sz_consistency(data_size, tomb_size)
             if data_size == 0 or tomb_size == 0:
                 return table
 
-            data = stack.enter_context(open(data_path, 'rb'))
-            tomb = stack.enter_context(open(tomb_path, 'rb'))
+            data_f = stack.enter_context(open(data_path, 'rb'))
+            tomb_f = stack.enter_context(open(tomb_path, 'rb'))
             mm_data = stack.enter_context(
-                mmap.mmap(data.fileno(), 0, access=mmap.ACCESS_READ))
+                mmap.mmap(data_f.fileno(), 0, access=mmap.ACCESS_READ))
             mm_tomb = stack.enter_context(
-                mmap.mmap(tomb.fileno(), 0, access=mmap.ACCESS_READ))
+                mmap.mmap(tomb_f.fileno(), 0, access=mmap.ACCESS_READ))
             mv_data = stack.enter_context(memoryview(mm_data))
 
-            for glob_pnt in range(0, len(mm_data), length):
-                if cls.is_deleted_flag(glob_pnt, mm_tomb):
-                    continue
-
-                prefix = mv_data[glob_pnt: glob_pnt + mask_len]
-                id_list_params = []
-
-                for id_attr in table_schema.primary_key:
-                    if cls.check_none_value(prefix, id_attr):
-                        raise AttributeError(
-                            "key have None value, but should not have"
-                        )
-
-                    id_offset = glob_pnt + mask_len + attr_offset_dict[id_attr]
-                    id_txt = attr_struct_dict[id_attr].unpack_from(mm_data, id_offset)[0]
-                    if isinstance(id_txt, bytes):
-                        id_txt = cls.sanitize(id_txt).decode('utf-8')
-                    id_list_params.append(id_txt)
+            for glob_pnt in cls.iter_live_offsets(mm_data, mm_tomb, length):
+                null_mask = mv_data[glob_pnt: glob_pnt + mask_len]
+                id_list_params = cls.read_primary_key_values(mm_data, glob_pnt, null_mask)
 
                 list_params = RowList()
                 for attr in attributes.keys():
-                    if not cls.check_none_value(prefix, attr):
+                    if not cls.check_none_value(null_mask, attr):
                         offset = glob_pnt + mask_len + attr_offset_dict[attr]
                         txt = attr_struct_dict[attr].unpack_from(mm_data, offset)[0]
                         if isinstance(txt, bytes):
@@ -102,7 +86,7 @@ class HighBaseModel(LowBaseModel):
                     list_params.append_named(txt, attr)
 
                 table[tuple(id_list_params)] = list_params
-                prefix.release()
+                null_mask.release()
         return table
 
     @classmethod
@@ -116,47 +100,29 @@ class HighBaseModel(LowBaseModel):
         logging = _LOG_INST.get()
         deleted_count = 0
         length, mask_len = table_schema.inst_len, table_schema.mask_len
-        attr_offset_dict = table_schema.attr_offset_dict
-        attr_ctype_dict = table_schema.attr_ctype_dict
         ast = build_ast(expr)
         vvars = [attrib for attrib in table_schema.attributes if attrib in expr]
 
         with ExitStack() as stack:
             data_path = table_schema.data_path
             tomb_path = table_schema.tomb_path
-
             data_size = data_path.stat().st_size
             tomb_size = tomb_path.stat().st_size
             cls.check_structure_sz_consistency(data_size, tomb_size)
             if data_size == 0 and tomb_size == 0:
                 return deleted_count
 
-            data = stack.enter_context(open(data_path, 'rb'))
-            tomb = stack.enter_context(open(tomb_path, 'r+b'))
+            data_f = stack.enter_context(open(data_path, 'rb'))
+            tomb_f = stack.enter_context(open(tomb_path, 'r+b'))
             mm_data = stack.enter_context(
-                mmap.mmap(data.fileno(), 0, access=mmap.ACCESS_READ))
+                mmap.mmap(data_f.fileno(), 0, access=mmap.ACCESS_READ))
             mm_tomb = stack.enter_context(
-                mmap.mmap(tomb.fileno(), 0, access=mmap.ACCESS_WRITE))
+                mmap.mmap(tomb_f.fileno(), 0, access=mmap.ACCESS_WRITE))
             mv_data = None if logging is None else stack.enter_context(memoryview(mm_data))
 
-            for glob_pnt in range(0, len(mm_data), length):
-                if cls.is_deleted_flag(glob_pnt, mm_tomb):
-                    continue
-
-                mask = mm_data[glob_pnt: glob_pnt + mask_len]
-                vals: dict[str, AcceptTypes] = {}
-
-                for var in vvars:
-                    if not cls.check_none_value(mask, var):
-                        start = glob_pnt + mask_len + attr_offset_dict[var]
-                        val, = struct.unpack_from(attr_ctype_dict[var], mm_data, start)
-
-                        vals[var] = (
-                            cls.sanitize(val).decode('utf-8')
-                            if isinstance(val, bytes) else val
-                        )
-                    else:
-                        vals[var] = None
+            for glob_pnt in cls.iter_live_offsets(mm_data, mm_tomb, length):
+                null_mask = mm_data[glob_pnt: glob_pnt + mask_len]
+                vals = cls.read_row_values(mm_data, glob_pnt, null_mask, vvars)
 
                 if eval_ast(expr, ast, vals):
                     deleted_count += 1
@@ -229,39 +195,23 @@ class HighBaseModel(LowBaseModel):
         with ExitStack() as stack:
             data_path = table_schema.data_path
             tomb_path = table_schema.tomb_path
-            data = stack.enter_context(open(data_path, 'r+b'))
-            tomb = stack.enter_context(open(tomb_path, 'rb'))
-
             data_size = data_path.stat().st_size
             tomb_size = tomb_path.stat().st_size
             cls.check_structure_sz_consistency(data_size, tomb_size)
             if data_size == 0 and tomb_size == 0:
                 return update_count
 
+            data_f = stack.enter_context(open(data_path, 'r+b'))
+            tomb_f = stack.enter_context(open(tomb_path, 'rb'))
             mm_data = stack.enter_context(
-                mmap.mmap(data.fileno(), 0, access=mmap.ACCESS_WRITE))
+                mmap.mmap(data_f.fileno(), 0, access=mmap.ACCESS_WRITE))
             mm_tomb = stack.enter_context(
-                mmap.mmap(tomb.fileno(), 0, access=mmap.ACCESS_READ))
+                mmap.mmap(tomb_f.fileno(), 0, access=mmap.ACCESS_READ))
             mv_data = stack.enter_context(memoryview(mm_data))
 
-            for glob_pnt in range(0, len(mm_data), length):
-                if cls.is_deleted_flag(glob_pnt, mm_tomb):
-                    continue
-
-                mask = mv_data[glob_pnt: glob_pnt + mask_len]
-                vals: dict[str, AcceptTypes] = {}
-
-                for var in vvars:
-                    if not cls.check_none_value(mask, var):
-                        start = glob_pnt + mask_len + attr_offset_dict[var]
-                        val, = struct.unpack_from(table_schema.attr_ctype_dict[var], mm_data, start)
-
-                        vals[var] = (
-                            cls.sanitize(val).decode('utf-8') if isinstance(val, bytes)
-                            else val
-                        )
-                    else:
-                        vals[var] = None
+            for glob_pnt in cls.iter_live_offsets(mm_data, mm_tomb, length):
+                null_mask = mv_data[glob_pnt: glob_pnt + mask_len]
+                vals = cls.read_row_values(mm_data, glob_pnt, null_mask, vvars)
 
                 if skip_check or eval_ast(expr, expr_ast, vals):
                     update_count += 1
@@ -274,11 +224,11 @@ class HighBaseModel(LowBaseModel):
                     for attr, comp_expr in compiled_attrs.items():
                         new_val = eval_ast(expr, comp_expr, vals)
                         start = glob_pnt + mask_len + attr_offset_dict[attr]
-                        is_none = cls.check_none_value(mask, attr)
+                        is_none = cls.check_none_value(null_mask, attr)
 
                         if new_val is None and not is_none:
                             if logging is None:
-                                cls._flip_prefix_bit(mask, attr_ord[attr])
+                                cls._flip_prefix_bit(null_mask, attr_ord[attr])
                             else:
                                 cls._flip_prefix_bit(log_mask, attr_ord[attr])
 
@@ -296,7 +246,7 @@ class HighBaseModel(LowBaseModel):
                             if isinstance(new_val, str):
                                 new_val = cls.sanitize_str(new_val).encode('utf-8')
                             if logging is None:
-                                cls._flip_prefix_bit(mask, attr_ord[attr])
+                                cls._flip_prefix_bit(null_mask, attr_ord[attr])
                                 attr_struct_dict[attr].pack_into(mm_data, start, new_val)
                             else:
                                 cls._flip_prefix_bit(log_mask, attr_ord[attr])
@@ -309,5 +259,5 @@ class HighBaseModel(LowBaseModel):
                         entry = logging.UpdateEntry(glob_pnt, old_data, new_data)
                         logging(entry)
 
-                mask.release()
+                null_mask.release()
         return update_count

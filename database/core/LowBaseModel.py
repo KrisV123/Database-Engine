@@ -5,6 +5,7 @@ from pathlib import Path
 from math import ceil
 from contextlib import ExitStack
 from typing import Any, TypeVar, ClassVar
+from collections.abc import Generator
 
 from database.core.types import AcceptTypes, STRUCT_FORMAT_INFO, PLACEHOLDER
 from database.core.row import RowList
@@ -269,7 +270,7 @@ class LowBaseModel(metaclass=BaseModelMeta):
                 byte_offset, bit_offset = 0, 0
             else:
                 inst_idx = start_pnt // inst_len + 1
-                byte_offset, bit_offset = inst_idx // 8, inst_idx % 8
+                byte_offset, bit_offset = inst_idx >> 3, inst_idx % 8
 
             segment, offset = None, None
 
@@ -315,3 +316,72 @@ class LowBaseModel(metaclass=BaseModelMeta):
                 f"instances in data.bin: {data_inst_count}\n",
                 f"instances in tombstone.bin: equal or less than {tomb_inst_count}"
             )))
+
+    @classmethod
+    def read_row_values(cls,
+                        mm_data: mmap.mmap,
+                        glob_pnt: int,
+                        mask: memoryview | bytes,
+                        attribs: list[str] | tuple[str, ...]) -> dict[str, AcceptTypes]:
+        """
+        takes list of attributes in table and returns dict
+        with their values from row on corespondenting global offset
+        """
+
+        table_schema = cls.get_table_schema()
+        attr_offset_dict = table_schema.attr_offset_dict
+        attr_struct_dict = table_schema.attr_struct_dict
+        mask_len = table_schema.mask_len
+
+        vals: dict[str, AcceptTypes] = {}
+        for attr in attribs:
+            if not cls.check_none_value(mask, attr):
+                start = glob_pnt + mask_len + attr_offset_dict[attr]
+                val = attr_struct_dict[attr].unpack_from(mm_data, start)[0]
+                vals[attr] = (
+                    cls.sanitize(val).decode('utf-8') if isinstance(val, bytes)
+                    else val
+                )
+            else:
+                vals[attr] = None
+        return vals
+
+    @classmethod
+    def read_primary_key_values(cls,
+                                mm_data: mmap.mmap,
+                                glob_pnt: int,
+                                mask: memoryview | bytes) -> list[AcceptTypes]:
+        """
+        returns list with primary key's values
+        from row on corespondenting global offset
+        """
+
+        table_schema = cls.get_table_schema()
+        attr_offset_dict = table_schema.attr_offset_dict
+        attr_struct_dict = table_schema.attr_struct_dict
+        mask_len = table_schema.mask_len
+        id_list_params = []
+
+        for attr in table_schema.primary_key:
+            if cls.check_none_value(mask, attr):
+                raise AttributeError(
+                    "key have None value, but should not have"
+                )
+            start = glob_pnt + mask_len + attr_offset_dict[attr]
+            id_txt = attr_struct_dict[attr].unpack_from(mm_data, start)[0]
+            if isinstance(id_txt, bytes):
+                id_txt = cls.sanitize(id_txt).decode('utf-8')
+            id_list_params.append(id_txt)
+
+        return id_list_params
+
+    @classmethod
+    def iter_live_offsets(cls,
+                          mm_data: mmap.mmap,
+                          mm_tomb: mmap.mmap,
+                          length: int) -> Generator[int]:
+        "returns Generator that return offsets from every undeleted row"
+
+        for glob_pnt in range(0, len(mm_data), length):
+            if not cls.is_deleted_flag(glob_pnt, mm_tomb):
+                yield glob_pnt

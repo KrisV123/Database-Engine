@@ -150,11 +150,11 @@ class HighBaseModel(LowBaseModel):
                 table_schema_bytes = table_schema.to_json().encode('utf-8')
                 entry = logging.DeleteTableEntry(all_flags, table_schema_bytes)
                 logging(entry)
-
-            open(cls.path / 'data/meta.json', 'w').close()
         else:
             open(table_schema.tomb_path, 'w').close()
             open(table_schema.data_path, 'w').close()
+            open(cls.path / 'data/meta.json', 'w').close()
+            cls._table_schema = None
 
     @classmethod
     def update(cls, expr: str, **attrs: str) -> int:

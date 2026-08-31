@@ -1,11 +1,9 @@
 import sys
-
-from typing import Any, Union, ClassVar, get_args, get_origin, get_type_hints, assert_never
+from typing import Any, Union, ClassVar, get_args, get_origin, get_type_hints
 from types import UnionType, NoneType
 from pathlib import Path
 
 from database.core.types import T_AcceptType, C_TYPES_TO_STRUCT
-from database.core.table_schema import TableSchema
 
 class InvalidTableError(BaseException):
     pass

@@ -37,15 +37,16 @@ class LowBaseModel(metaclass=BaseModelMeta):
                 meta_size = (cls.path / 'data/meta.json').stat().st_size
             except:
                 meta_size = 0
+
             if meta_exists and meta_size == 0:
                 cls._table_schema = TableSchema.init_meta(cls)
             elif meta_exists:
                 cls._table_schema = TableSchema.check_table_schema(cls, cls.path)
             else:
                 cls._table_schema = TableSchema.init_meta(cls)
-            return cls._table_schema
-        else:
-            return cls._table_schema
+
+        return cls._table_schema
+
 
     @staticmethod
     def sanitize(bstream: bytes) -> bytes:

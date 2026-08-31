@@ -10,10 +10,11 @@ DATABAZA:
 6,  (HOTOVO) upratat cely WAL, neda sa tak v nom programovat,
     (ASI ROBENE KTOVI ODLISNYM SPOSOBOM OTVORENIA) vela duplicity ASI niekedy otvara log_f, ked uz je otvoreny a uz df mam
     (mozno kvoli tomu leakuje fd)
+7,  napisat testy na TableSchema a nezabudnut na testy v integracii s WAL
+8,  pozried sa, ci nieco nepotrebuje dopisat testy (som si isty ze hej)
 
 Robota:
 
-0.  napisat testy pre TableSchema
 1.  napisat test na unreadable_log parameter a iter_logs(corrupt=True)
 2.  (NIKDY NEPOJDE) zariadit, aby metoda set() vracal spravny typ Table
     (aj s vnutornymi parametrami), inac to v praxi nefunguje dobre

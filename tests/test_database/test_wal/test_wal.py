@@ -238,12 +238,6 @@ class Test_WAL:
                 b'\x00\x00\x00\x00'
             )
 
-        @pytest.fixture
-        def get_test_model_meta_bytes(self) -> bytes:
-            with open(Test.path / 'data/meta.json', 'r') as f:
-                data = json.load(f)
-            return json.dumps(data).encode('utf-8')
-
         def test_handle_operator_send_sanity_full_before(
                                             self,
                                             db_one_usage: Test_WAL.Db_one_use_yield,
@@ -319,11 +313,9 @@ class Test_WAL:
                 assert log_inst.empty_space_pnt == 540
 
         def test_handle_operator_delete_table_sanity(self,
-                                                     db_one_usage: Test_WAL.Db_one_use_yield,
-                                                     get_test_model_meta_bytes: bytes
-                                                    ):
+                                                     db_one_usage: Test_WAL.Db_one_use_yield):
 
-            entry = WAL.DeleteTableEntry(b'\00', get_test_model_meta_bytes)
+            entry = WAL.DeleteTableEntry(b'\00', expect_logs.encode_table_schema)
             with WAL(Test, 'log_specially_made_for_testing') as log_inst:
                 assert log_inst.db_full == True
                 assert log_inst.empty_space_pnt != 0
@@ -331,8 +323,8 @@ class Test_WAL:
                 assert log_inst.db_full == False
                 assert log_inst.empty_space_pnt == 0
 
-        def test_handle_operator_delete_table_empty(self, get_test_model_meta_bytes: bytes):
-            entry = WAL.DeleteTableEntry(b'\x00', get_test_model_meta_bytes)
+        def test_handle_operator_delete_table_empty(self):
+            entry = WAL.DeleteTableEntry(b'\x00', expect_logs.encode_table_schema)
             with WAL(Test, 'log_specially_made_for_testing') as log_inst:
                 assert log_inst.db_full == True
                 assert log_inst.empty_space_pnt == 0

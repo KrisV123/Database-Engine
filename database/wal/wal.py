@@ -428,6 +428,7 @@ class WAL(EntryPoints):
                         utils.commit_delete_log(log_pnt, data)
                     case Operator.DELETE_TABLE:
                         utils.commit_delete_table_log(log_pnt, data)
+                        model._table_schema = None
                 log_pnt += data.log_length
 
             obj._set_log_seg_checksum(log_f_mm, path)
@@ -623,6 +624,7 @@ class WAL(EntryPoints):
                         utils.rollback_delete_log(glob_pnt)
                     case Operator.DELETE_TABLE:
                         utils.rollback_delete_table_log(data)
+                        model._table_schema = None
 
                 # seting log to unapplied
                 apply_log_flag_pnt = offset_list[i] + data.log_length - 1
